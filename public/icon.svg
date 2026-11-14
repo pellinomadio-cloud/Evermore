@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="emGrad" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#a855f7" />
+      <stop offset="55%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#4c1d95" />
+    </linearGradient>
+    <linearGradient id="emShine" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22" />
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.06" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#emGrad)" />
+  <path d="M0 0H512L0 512V0Z" fill="url(#emShine)" />
+  <path
+    d="M124 176H226V210H162V240H216V272H162V304H226V338H124V176Z"
+    fill="#ffffff"
+  />
+  <path
+    d="M250 176H284L322 246L360 176H394V338H358V238L322 302L286 238V338H250V176Z"
+    fill="#ffffff"
+  />
+  <path
+    d="M322 126L330 150L354 158L330 166L322 190L314 166L290 158L314 150L322 126Z"
+    fill="#f5f3ff"
+  />
+</svg>

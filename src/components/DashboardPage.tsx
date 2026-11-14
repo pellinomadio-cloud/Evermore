@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { GpayLogo } from './GpayLogo';
 import { UserAccount } from './AuthPage';
+import { PWAInstallButton } from './PWAInstallButton';
 import {
   addEcoinSubmission,
   addUpgradeSubmission,
@@ -2440,6 +2441,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
 
             <div className="pt-3 border-t border-purple-100 dark:border-[#2a134f] space-y-2">
+              <PWAInstallButton variant="drawer" />
               <button
                 type="button"
                 onClick={() => navigateTo('withdraw')}
@@ -2549,8 +2551,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             })}
           </nav>
 
-          {/* Drawer Footer: Logout + Silent Red Dot at the bottom */}
-          <div className="p-3 border-t border-purple-100 dark:border-[#2d1650] space-y-3">
+          {/* Drawer Footer: Install App + Logout + Silent Red Dot at the bottom */}
+          <div className="p-3 border-t border-purple-100 dark:border-[#2d1650] space-y-2.5">
+            <PWAInstallButton
+              variant="drawer"
+              onBeforeOpenGuide={() => setIsLeftDrawerOpen(false)}
+            />
+
             <button
               type="button"
               onClick={() => {

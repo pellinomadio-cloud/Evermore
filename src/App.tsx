@@ -11,6 +11,7 @@ import { LandingPage } from './components/LandingPage';
 import { AuthPage, UserAccount } from './components/AuthPage';
 import { DashboardPage } from './components/DashboardPage';
 import { AdminDashboard } from './components/AdminDashboard';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 type ViewState = 'landing' | 'register' | 'login' | 'dashboard' | 'admin';
 
@@ -94,54 +95,66 @@ export default function App() {
 
   if (view === 'admin') {
     return (
-      <AdminDashboard
-        darkMode={darkMode}
-        onExit={() => {
-          setView(currentUser ? 'dashboard' : 'landing');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
+      <>
+        <AdminDashboard
+          darkMode={darkMode}
+          onExit={() => {
+            setView(currentUser ? 'dashboard' : 'landing');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   if (view === 'register' || view === 'login') {
     return (
-      <AuthPage
-        initialMode={view}
-        darkMode={darkMode}
-        onBack={() => setView('landing')}
-        onSuccess={handleAuthSuccess}
-      />
+      <>
+        <AuthPage
+          initialMode={view}
+          darkMode={darkMode}
+          onBack={() => setView('landing')}
+          onSuccess={handleAuthSuccess}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   if (view === 'dashboard' && currentUser) {
     return (
-      <DashboardPage
-        user={currentUser}
-        darkMode={darkMode}
-        onToggleDarkMode={() => setDarkMode((prev) => !prev)}
-        onLogout={handleLogout}
-        onOpenAdminDashboard={() => {
-          setView('admin');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
+      <>
+        <DashboardPage
+          user={currentUser}
+          darkMode={darkMode}
+          onToggleDarkMode={() => setDarkMode((prev) => !prev)}
+          onLogout={handleLogout}
+          onOpenAdminDashboard={() => {
+            setView('admin');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   return (
-    <LandingPage
-      onGetStarted={() => {
-        setView('register');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }}
-      onLogin={() => {
-        setView('login');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }}
-      darkMode={darkMode}
-      onToggleDarkMode={() => setDarkMode((prev) => !prev)}
-    />
+    <>
+      <LandingPage
+        onGetStarted={() => {
+          setView('register');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onLogin={() => {
+          setView('login');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode((prev) => !prev)}
+      />
+      <OfflineIndicator />
+    </>
   );
 }

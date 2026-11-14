@@ -1,16 +1,15 @@
 import React, { useState } from 'react';
 import {
   ArrowRight,
-  Download,
   Menu,
   X,
-  CheckCircle2,
   ShieldCheck,
   TrendingUp,
   Zap,
   Smartphone,
 } from 'lucide-react';
 import { GpayLogo } from './GpayLogo';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -26,16 +25,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onToggleDarkMode,
 }) => {
   const [showInstallCard, setShowInstallCard] = useState(true);
-  const [installStatus, setInstallStatus] = useState<'idle' | 'installing' | 'installed'>('idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  const handleInstallApp = () => {
-    if (installStatus !== 'idle') return;
-    setInstallStatus('installing');
-    setTimeout(() => {
-      setInstallStatus('installed');
-    }, 900);
-  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#faf7ff] dark:bg-[#0f051d] text-[#1e1b4b] dark:text-white transition-colors duration-200 selection:bg-[#7c3aed] selection:text-white">
@@ -87,6 +77,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           {/* Zone 3: Compact Right Controls */}
           <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton variant="pill" className="hidden sm:inline-flex" />
+
             <button
               type="button"
               onClick={onLogin}
@@ -240,7 +232,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               {showInstallCard && (
                 <div className="relative z-10 max-w-[380px] rounded-2xl bg-gradient-to-b from-[#8b5cf6] to-[#6d28d9] p-4 sm:p-5 text-white shadow-[0_14px_35px_rgba(109,40,217,0.3)] border border-[#c084fc]/35">
                   <div className="flex items-center gap-3 mb-4">
-                    <GpayLogo size="md" iconOnly />
+                    <img
+                      src="/pwa-192x192.png"
+                      alt="EverMore App Icon"
+                      className="w-11 h-11 rounded-xl shadow-md border border-white/30 shrink-0"
+                    />
                     <div>
                       <h2 className="text-base font-bold leading-snug text-white">
                         Install EverMore
@@ -251,25 +247,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleInstallApp}
-                    className="w-full bg-white hover:bg-purple-50 active:scale-[0.99] text-[#6d28d9] font-bold text-xs sm:text-sm py-2.5 px-4 rounded-full flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
-                  >
-                    {installStatus === 'installed' ? (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 text-[#6d28d9] shrink-0" />
-                        <span className="whitespace-nowrap">EverMore Ready on Device</span>
-                      </>
-                    ) : installStatus === 'installing' ? (
-                      <span className="whitespace-nowrap">Preparing EverMore Shortcut...</span>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 text-[#6d28d9] stroke-[2.25] shrink-0" />
-                        <span className="whitespace-nowrap">Install App</span>
-                      </>
-                    )}
-                  </button>
+                  <PWAInstallButton variant="card" />
 
                   <button
                     type="button"
