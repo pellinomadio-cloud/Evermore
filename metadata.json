@@ -1,0 +1,6 @@
+{
+  "name": "Gpay",
+  "description": "Earn daily, manage payments, and grow your money securely with Gpay — your trusted financial partner.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
