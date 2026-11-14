@@ -111,6 +111,23 @@ service cloud.firestore {
         && data.createdAt is string && data.createdAt.size() <= 64;
     }
 
+    function isValidSupportThread(data, userId) {
+      return data.keys().hasAll(['userId', 'userName', 'messages', 'awaitingAdminReply', 'lastMessageAt'])
+        && data.keys().hasOnly([
+          'userId',
+          'userName',
+          'userEmail',
+          'messages',
+          'awaitingAdminReply',
+          'lastMessageAt'
+        ])
+        && data.userId is string && data.userId == userId
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120
+        && data.messages is list && data.messages.size() <= 200
+        && data.awaitingAdminReply is bool
+        && data.lastMessageAt is string && data.lastMessageAt.size() <= 64;
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId);
       allow list: if isSignedIn();
@@ -138,6 +155,13 @@ service cloud.firestore {
       allow list: if isSignedIn();
       allow create: if isSignedIn() && isValidId(submissionId) && incoming().userId == request.auth.uid && incoming().status == 'pending' && isValidUpgradeSubmission(incoming());
       allow update: if isSignedIn() && isValidId(submissionId) && isValidUpgradeSubmission(incoming()) && incoming().userId == resource.data.userId;
+    }
+
+    match /supportThreads/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidSupportThread(incoming(), userId);
+      allow update: if isSignedIn() && isValidId(userId) && isValidSupportThread(incoming(), userId) && incoming().userId == resource.data.userId;
     }
   }
 }

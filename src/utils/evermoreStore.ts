@@ -84,6 +84,22 @@ export interface RegisteredUserAmount {
   balance: number;
 }
 
+export interface SupportMessage {
+  id: string;
+  sender: 'user' | 'admin';
+  text: string;
+  createdAt: string;
+}
+
+export interface SupportThread {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  messages: SupportMessage[];
+  awaitingAdminReply: boolean;
+  lastMessageAt: string;
+}
+
 export const DEFAULT_COMPANY_BANK: CompanyBankDetails = {
   bankName: 'Moniepoint MFB',
   accountNumber: '8104927361',
@@ -593,4 +609,160 @@ export function subscribeRegisteredUserAmounts(
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );
+}
+
+// ==================== SUPPORT CHAT THREADS ====================
+
+function mapSupportThread(userId: string, data: Record<string, unknown>): SupportThread {
+  const rawMessages = Array.isArray(data.messages) ? data.messages : [];
+  const messages: SupportMessage[] = rawMessages
+    .filter((m): m is Record<string, unknown> => Boolean(m && typeof m === 'object'))
+    .map((m, idx) => ({
+      id: typeof m.id === 'string' ? m.id : `msg-${idx}`,
+      sender: m.sender === 'admin' ? 'admin' : 'user',
+      text: typeof m.text === 'string' ? m.text : '',
+      createdAt:
+        typeof m.createdAt === 'string' ? m.createdAt : new Date().toISOString(),
+    }));
+
+  const lastMessage = messages[messages.length - 1];
+  const awaitingAdminReply =
+    typeof data.awaitingAdminReply === 'boolean'
+      ? data.awaitingAdminReply
+      : lastMessage?.sender === 'user';
+
+  return {
+    userId,
+    userName: typeof data.userName === 'string' ? data.userName : 'User',
+    userEmail: typeof data.userEmail === 'string' ? data.userEmail : '',
+    messages,
+    awaitingAdminReply,
+    lastMessageAt:
+      typeof data.lastMessageAt === 'string'
+        ? data.lastMessageAt
+        : lastMessage?.createdAt || new Date().toISOString(),
+  };
+}
+
+export function subscribeUserSupportThread(
+  userId: string,
+  onData: (thread: SupportThread | null) => void
+): Unsubscribe {
+  const path = `supportThreads/${userId}`;
+  return onSnapshot(
+    doc(db, 'supportThreads', userId),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(mapSupportThread(userId, snap.data() as Record<string, unknown>));
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+export function subscribeAllSupportThreads(
+  onData: (threads: SupportThread[]) => void
+): Unsubscribe {
+  const path = 'supportThreads';
+  const q = query(collection(db, path), orderBy('lastMessageAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onData(
+        snapshot.docs.map((d) =>
+          mapSupportThread(d.id, d.data() as Record<string, unknown>)
+        )
+      );
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function sendUserSupportMessage(
+  userId: string,
+  userName: string,
+  userEmail: string,
+  text: string
+): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const path = `supportThreads/${userId}`;
+  const ref = doc(db, 'supportThreads', userId);
+  try {
+    const snap = await getDoc(ref);
+    const now = new Date().toISOString();
+    const newMessage: SupportMessage = {
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      sender: 'user',
+      text: trimmed,
+      createdAt: now,
+    };
+
+    if (!snap.exists()) {
+      await setDoc(ref, {
+        userId,
+        userName: userName.trim() || 'User',
+        userEmail: userEmail.trim().toLowerCase(),
+        messages: [newMessage],
+        awaitingAdminReply: true,
+        lastMessageAt: now,
+      });
+      return;
+    }
+
+    const existing = mapSupportThread(userId, snap.data() as Record<string, unknown>);
+    const lastMessage = existing.messages[existing.messages.length - 1];
+    if (existing.awaitingAdminReply || lastMessage?.sender === 'user') {
+      throw new Error('AWAITING_SUPPORT_REPLY');
+    }
+
+    await updateDoc(ref, {
+      userName: userName.trim() || existing.userName,
+      userEmail: userEmail.trim().toLowerCase() || existing.userEmail,
+      messages: [...existing.messages, newMessage],
+      awaitingAdminReply: true,
+      lastMessageAt: now,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'AWAITING_SUPPORT_REPLY') {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function sendAdminSupportReply(
+  userId: string,
+  text: string
+): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const path = `supportThreads/${userId}`;
+  const ref = doc(db, 'supportThreads', userId);
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const existing = mapSupportThread(userId, snap.data() as Record<string, unknown>);
+    const now = new Date().toISOString();
+    const replyMessage: SupportMessage = {
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      sender: 'admin',
+      text: trimmed,
+      createdAt: now,
+    };
+
+    await updateDoc(ref, {
+      messages: [...existing.messages, replyMessage],
+      awaitingAdminReply: false,
+      lastMessageAt: now,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
 }

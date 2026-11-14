@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -48,9 +48,12 @@ import {
   getCompanyBankDetails,
   getEcoinSubmissionById,
   getUpgradeSubmissionById,
+  sendUserSupportMessage,
   subscribeCommunityLinks,
   subscribeCompanyBankDetails,
+  subscribeUserSupportThread,
   subscribeUserWallet,
+  SupportThread,
   TransactionEntry,
   updateUserWallet,
 } from '../utils/evermoreStore';
@@ -213,8 +216,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [serviceAmount, setServiceAmount] = useState('');
   const [serviceStatus, setServiceStatus] = useState<string | null>(null);
   const [supportMessage, setSupportMessage] = useState('');
+  const [supportThread, setSupportThread] = useState<SupportThread | null>(null);
+  const [isSendingSupport, setIsSendingSupport] = useState(false);
+  const supportChatEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Real-time Firestore subscriptions for user wallet, company bank, and community links
+  // Real-time Firestore subscriptions for user wallet, company bank, community links, and support chat
   useEffect(() => {
     const unsubWallet = subscribeUserWallet(user.uid, (wallet) => {
       setBalance(wallet.balance);
@@ -237,12 +243,23 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setCommunityLinks(links);
     });
 
+    const unsubSupport = subscribeUserSupportThread(user.uid, (thread) => {
+      setSupportThread(thread);
+    });
+
     return () => {
       unsubWallet();
       unsubBank();
       unsubLinks();
+      unsubSupport();
     };
   }, [user.uid]);
+
+  useEffect(() => {
+    if (subPage === 'support' || subPage === 'help') {
+      supportChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [subPage, supportThread?.messages.length]);
 
   const firstName = user.name.trim().split(/\s+/)[0] || 'User';
 
@@ -652,6 +669,36 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setWithdrawEcoinCode(latestCode);
     }
     navigateTo('withdraw');
+  };
+
+  const supportMessages = supportThread?.messages ?? [];
+  const lastSupportMsg = supportMessages[supportMessages.length - 1];
+  const isAwaitingSupportReply = Boolean(
+    supportThread?.awaitingAdminReply || lastSupportMsg?.sender === 'user'
+  );
+
+  const handleSendSupportMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = supportMessage.trim();
+    if (!trimmed || isSendingSupport) return;
+    if (isAwaitingSupportReply) {
+      showToast('Please wait for EverMore Support to reply before sending another message.');
+      return;
+    }
+
+    setIsSendingSupport(true);
+    try {
+      await sendUserSupportMessage(user.uid, user.name, user.email, trimmed);
+      setSupportMessage('');
+    } catch (err) {
+      if (err instanceof Error && err.message === 'AWAITING_SUPPORT_REPLY') {
+        showToast('Please wait for EverMore Support to reply first.');
+      } else {
+        showToast('Could not send message. Check your connection.');
+      }
+    } finally {
+      setIsSendingSupport(false);
+    }
   };
 
   // Sub-page title lookup
@@ -2242,34 +2289,121 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </section>
         )}
 
-        {/* ==================== SUPPORT / HELP PAGE ==================== */}
+        {/* ==================== SUPPORT / HELP CHAT PAGE ==================== */}
         {(subPage === 'support' || subPage === 'help') && (
-          <section className="rounded-2xl bg-white dark:bg-[#17092e] p-5 shadow-md border border-purple-100 dark:border-[#31175c] space-y-4">
-            <h2 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white">
-              24/7 EverMore Customer Care
-            </h2>
-            <p className="text-xs text-slate-600 dark:text-[#c4b5fd]">
-              Need help purchasing your Ecoin withdrawal code or verifying a
-              payout? Send a message below:
-            </p>
-            <textarea
-              rows={3}
-              value={supportMessage}
-              onChange={(e) => setSupportMessage(e.target.value)}
-              placeholder="Describe how we can help you..."
-              className="w-full p-3 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs focus:outline-none focus:border-[#7c3aed]"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (!supportMessage.trim()) return;
-                setSupportMessage('');
-                showToast('Message sent to EverMore Support!');
-              }}
-              className="w-full py-2.5 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold text-xs cursor-pointer"
-            >
-              Send Message
-            </button>
+          <section className="rounded-2xl bg-white dark:bg-[#17092e] shadow-md border border-purple-100 dark:border-[#31175c] overflow-hidden flex flex-col">
+            {/* Chat Header */}
+            <div className="px-4 py-3.5 bg-[#faf7ff] dark:bg-[#110622] border-b border-purple-100 dark:border-[#2a134f] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-full bg-[#7c3aed] text-white flex items-center justify-center shrink-0">
+                  <Headphones className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-xs font-extrabold text-[#1e1b4b] dark:text-white">
+                    EverMore Support
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-[#c4b5fd]">
+                    24/7 Customer Care Chat
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`text-[10.5px] font-bold px-2.5 py-0.5 rounded-full ${
+                  isAwaitingSupportReply
+                    ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                    : 'bg-purple-100 dark:bg-purple-900/50 text-[#7c3aed] dark:text-[#c084fc]'
+                }`}
+              >
+                {isAwaitingSupportReply ? 'Awaiting Reply' : 'Online'}
+              </span>
+            </div>
+
+            {/* Chat Thread Messages */}
+            <div className="h-80 overflow-y-auto p-4 space-y-3 bg-[#fcfaff] dark:bg-[#130726]">
+              {/* Welcome Message */}
+              <div className="flex flex-col items-start">
+                <div className="max-w-[82%] px-3.5 py-2.5 rounded-2xl rounded-bl-sm bg-[#f3e8ff] dark:bg-[#220e42] text-[#1e1b4b] dark:text-white text-xs leading-relaxed">
+                  Hi {firstName}! Welcome to EverMore Support. Send us a message
+                  below and our team will reply to you directly in this chat.
+                </div>
+                <span className="text-[10px] text-slate-400 dark:text-[#b794f4] mt-1 px-1">
+                  EverMore Support
+                </span>
+              </div>
+
+              {supportMessages.map((msg) => {
+                const isUser = msg.sender === 'user';
+                const timeLabel = new Date(msg.createdAt).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                });
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col ${
+                      isUser ? 'items-end' : 'items-start'
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
+                        isUser
+                          ? 'bg-[#7c3aed] text-white rounded-br-sm'
+                          : 'bg-[#f3e8ff] dark:bg-[#220e42] text-[#1e1b4b] dark:text-white rounded-bl-sm'
+                      }`}
+                    >
+                      <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                    </div>
+                    <span className="text-[10px] text-slate-400 dark:text-[#b794f4] mt-1 px-1">
+                      {isUser ? 'You' : 'EverMore Support'} · {timeLabel}
+                    </span>
+                  </div>
+                );
+              })}
+              <div ref={supportChatEndRef} />
+            </div>
+
+            {/* Turn-Taking Lock Banner + Chat Composer */}
+            <div className="p-3 bg-white dark:bg-[#17092e] border-t border-purple-100 dark:border-[#2a134f] space-y-2">
+              {isAwaitingSupportReply && (
+                <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/50 text-[11px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    Waiting for a response from EverMore Support before you can send another message.
+                  </span>
+                </div>
+              )}
+
+              <form onSubmit={handleSendSupportMessage} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={supportMessage}
+                  onChange={(e) => setSupportMessage(e.target.value)}
+                  disabled={isAwaitingSupportReply || isSendingSupport}
+                  placeholder={
+                    isAwaitingSupportReply
+                      ? 'Waiting for support reply...'
+                      : 'Type your message to EverMore Support...'
+                  }
+                  className="flex-1 px-3.5 py-2.5 rounded-full bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs focus:outline-none focus:border-[#7c3aed] disabled:opacity-60 disabled:cursor-not-allowed"
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    isAwaitingSupportReply ||
+                    isSendingSupport ||
+                    !supportMessage.trim()
+                  }
+                  aria-label="Send support message"
+                  className="w-10 h-10 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-50 disabled:cursor-not-allowed text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                >
+                  {isSendingSupport ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                </button>
+              </form>
+            </div>
           </section>
         )}
 

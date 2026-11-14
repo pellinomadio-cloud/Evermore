@@ -81,6 +81,20 @@
         "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "userId", "userName", "userEmail", "tier", "amount", "receiptName", "status", "createdAt"]
+    },
+    "SupportThread": {
+      "title": "SupportThread",
+      "description": "User-to-EverMore Support chat thread with turn-taking reply lock.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userEmail": { "type": "string", "maxLength": 160 },
+        "messages": { "type": "array" },
+        "awaitingAdminReply": { "type": "boolean" },
+        "lastMessageAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["userId", "userName", "messages", "awaitingAdminReply", "lastMessageAt"]
     }
   },
   "firestore": {
@@ -99,6 +113,10 @@
     "/upgradeSubmissions/{submissionId}": {
       "schema": { "$ref": "#/entities/UpgradeSubmission" },
       "description": "Account upgrade payment receipts awaiting admin approval or decline."
+    },
+    "/supportThreads/{userId}": {
+      "schema": { "$ref": "#/entities/SupportThread" },
+      "description": "EverMore Support chat threads between users and admin."
     }
   }
 }

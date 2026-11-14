@@ -4,6 +4,7 @@ import {
   Building2,
   CheckCircle2,
   Clock,
+  Headphones,
   MessageCircle,
   RefreshCw,
   Send,
@@ -28,11 +29,14 @@ import {
   RegisteredUserAmount,
   saveCommunityLinks,
   saveCompanyBankDetails,
+  sendAdminSupportReply,
+  subscribeAllSupportThreads,
   subscribeCommunityLinks,
   subscribeCompanyBankDetails,
   subscribeEcoinSubmissions,
   subscribeRegisteredUserAmounts,
   subscribeUpgradeSubmissions,
+  SupportThread,
   UpgradeSubmission,
 } from '../utils/evermoreStore';
 
@@ -49,13 +53,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [communityLinks, setCommunityLinks] = useState<CommunityLinks>(DEFAULT_COMMUNITY_LINKS);
   const [submissions, setSubmissions] = useState<EcoinSubmission[]>([]);
   const [upgradeSubmissions, setUpgradeSubmissions] = useState<UpgradeSubmission[]>([]);
+  const [supportThreads, setSupportThreads] = useState<SupportThread[]>([]);
+  const [selectedThreadUserId, setSelectedThreadUserId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
   const [userSummary, setUserSummary] = useState<{
     totalUsers: number;
     totalBalance: number;
     users: RegisteredUserAmount[];
   }>({ totalUsers: 0, totalBalance: 0, users: [] });
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'payments' | 'bank' | 'groups' | 'users'>('payments');
+  const [activeTab, setActiveTab] = useState<'payments' | 'support' | 'bank' | 'groups' | 'users'>('payments');
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +78,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const unsubUpgrade = subscribeUpgradeSubmissions((items) => {
       setUpgradeSubmissions(items);
     });
+    const unsubSupport = subscribeAllSupportThreads((threads) => {
+      setSupportThreads(threads);
+    });
     const unsubUsers = subscribeRegisteredUserAmounts((summary) => {
       setUserSummary(summary);
     });
@@ -80,6 +90,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       unsubLinks();
       unsubEcoin();
       unsubUpgrade();
+      unsubSupport();
       unsubUsers();
     };
   }, []);
@@ -195,10 +206,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const handleSendSupportReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedThreadUserId || !replyText.trim()) return;
+    setBusyId(`reply-${selectedThreadUserId}`);
+    try {
+      await sendAdminSupportReply(selectedThreadUserId, replyText);
+      setReplyText('');
+      showNotice('Reply sent to user.');
+    } catch {
+      showNotice('Failed to send reply. Check Firestore rules.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const pendingCount =
     submissions.filter((s) => s.status === 'pending').length +
     upgradeSubmissions.filter((u) => u.status === 'pending').length;
   const totalSubmissionsCount = submissions.length + upgradeSubmissions.length;
+  const awaitingSupportCount = supportThreads.filter((t) => t.awaitingAdminReply).length;
+  const selectedThread =
+    supportThreads.find((t) => t.userId === selectedThreadUserId) || null;
 
   return (
     <div className="min-h-screen bg-[#f6f3ff] dark:bg-[#0f051d] text-[#1e1b4b] dark:text-white pb-16 transition-colors duration-200">
@@ -272,7 +301,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </section>
 
         {/* Segmented Tab Controls */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 rounded-xl bg-purple-100/70 dark:bg-[#17092e] border border-purple-200/70 dark:border-[#31175c]">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1 rounded-xl bg-purple-100/70 dark:bg-[#17092e] border border-purple-200/70 dark:border-[#31175c]">
           <button
             type="button"
             onClick={() => setActiveTab('payments')}
@@ -283,6 +312,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             }`}
           >
             Payments ({totalSubmissionsCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('support')}
+            className={`py-2 px-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'support'
+                ? 'bg-white dark:bg-[#7c3aed] text-[#7c3aed] dark:text-white shadow-xs'
+                : 'text-slate-600 dark:text-[#c4b5fd] hover:text-[#1e1b4b]'
+            }`}
+          >
+            Support ({awaitingSupportCount})
           </button>
 
           <button
@@ -312,7 +353,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('users')}
-            className={`py-2 px-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+            className={`col-span-2 sm:col-span-1 py-2 px-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
               activeTab === 'users'
                 ? 'bg-white dark:bg-[#7c3aed] text-[#7c3aed] dark:text-white shadow-xs'
                 : 'text-slate-600 dark:text-[#c4b5fd] hover:text-[#1e1b4b]'
@@ -507,7 +548,163 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
-        {/* TAB 2: Set Company Bank Account Details */}
+        {/* TAB 2: Support Chat Inbox & Replies */}
+        {activeTab === 'support' && (
+          <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-3.5">
+            {!selectedThread ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white flex items-center gap-2">
+                    <Headphones className="w-4 h-4 text-[#7c3aed]" />
+                    <span>Support Messages</span>
+                  </h2>
+                  <span className="text-xs font-bold text-[#7c3aed] dark:text-[#c084fc]">
+                    {awaitingSupportCount} awaiting reply
+                  </span>
+                </div>
+
+                {supportThreads.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-500 dark:text-[#c4b5fd]">
+                    No user support messages yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {supportThreads.map((thread) => {
+                      const lastMsg = thread.messages[thread.messages.length - 1];
+                      return (
+                        <button
+                          key={thread.userId}
+                          type="button"
+                          onClick={() => {
+                            setSelectedThreadUserId(thread.userId);
+                            setReplyText('');
+                          }}
+                          className="w-full text-left p-3.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] hover:border-[#7c3aed] transition-colors flex items-center justify-between gap-3 cursor-pointer"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-extrabold text-[#1e1b4b] dark:text-white truncate">
+                              {thread.userName}
+                            </p>
+                            <p className="text-[11px] text-slate-500 dark:text-[#c4b5fd] truncate mt-0.5">
+                              {lastMsg
+                                ? `${lastMsg.sender === 'admin' ? 'You: ' : ''}${lastMsg.text}`
+                                : 'No messages yet'}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-[10.5px] font-bold px-2.5 py-0.5 rounded-full shrink-0 ${
+                              thread.awaitingAdminReply
+                                ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                                : 'bg-purple-100 dark:bg-purple-900/50 text-[#7c3aed] dark:text-[#c084fc]'
+                            }`}
+                          >
+                            {thread.awaitingAdminReply ? 'Awaiting Reply' : 'Replied'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-purple-100 dark:border-[#2a134f]">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedThreadUserId(null);
+                        setReplyText('');
+                      }}
+                      className="w-8 h-8 rounded-full bg-[#f3e8ff] dark:bg-[#261147] text-[#7c3aed] dark:text-[#c084fc] flex items-center justify-center hover:bg-[#e9d5ff] cursor-pointer shrink-0"
+                      aria-label="Back to support inbox"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold text-[#1e1b4b] dark:text-white truncate">
+                        {selectedThread.userName}
+                      </p>
+                      <p className="text-[10.5px] text-slate-500 dark:text-[#b794f4]">
+                        {selectedThread.awaitingAdminReply
+                          ? 'Waiting for your reply'
+                          : 'Replied — user can send next message'}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10.5px] font-bold px-2.5 py-0.5 rounded-full shrink-0 ${
+                      selectedThread.awaitingAdminReply
+                        ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                        : 'bg-purple-100 dark:bg-purple-900/50 text-[#7c3aed] dark:text-[#c084fc]'
+                    }`}
+                  >
+                    {selectedThread.awaitingAdminReply ? 'Awaiting Reply' : 'Replied'}
+                  </span>
+                </div>
+
+                {/* Chat Messages */}
+                <div className="h-72 overflow-y-auto space-y-2.5 pr-1">
+                  {selectedThread.messages.map((msg) => {
+                    const isAdmin = msg.sender === 'admin';
+                    const timeLabel = new Date(msg.createdAt).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${
+                          isAdmin ? 'items-end' : 'items-start'
+                        }`}
+                      >
+                        <div
+                          className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
+                            isAdmin
+                              ? 'bg-[#7c3aed] text-white rounded-br-sm'
+                              : 'bg-[#f3e8ff] dark:bg-[#220e42] text-[#1e1b4b] dark:text-white rounded-bl-sm'
+                          }`}
+                        >
+                          <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                        </div>
+                        <span className="text-[10px] text-slate-400 dark:text-[#b794f4] mt-1 px-1">
+                          {isAdmin ? 'EverMore Support' : selectedThread.userName} · {timeLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Admin Reply Form */}
+                <form
+                  onSubmit={handleSendSupportReply}
+                  className="pt-2 border-t border-purple-100 dark:border-[#2a134f] flex items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder={`Reply to ${selectedThread.userName}...`}
+                    required
+                    className="flex-1 px-3.5 py-2.5 rounded-full bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs focus:outline-none focus:border-[#7c3aed]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={
+                      busyId === `reply-${selectedThread.userId}` || !replyText.trim()
+                    }
+                    className="px-4 py-2.5 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send</span>
+                  </button>
+                </form>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* TAB 3: Set Company Bank Account Details */}
         {activeTab === 'bank' && (
           <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2">
