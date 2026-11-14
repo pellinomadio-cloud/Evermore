@@ -7,8 +7,9 @@ import { useEffect, useState } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { AuthPage, UserAccount } from './components/AuthPage';
 import { DashboardPage } from './components/DashboardPage';
+import { AdminDashboard } from './components/AdminDashboard';
 
-type ViewState = 'landing' | 'register' | 'login' | 'dashboard';
+type ViewState = 'landing' | 'register' | 'login' | 'dashboard' | 'admin';
 
 const ACTIVE_USER_KEY = 'evermore_active_user_v1';
 
@@ -50,6 +51,18 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  if (view === 'admin') {
+    return (
+      <AdminDashboard
+        darkMode={darkMode}
+        onExit={() => {
+          setView(currentUser ? 'dashboard' : 'landing');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
+    );
+  }
+
   if (view === 'register' || view === 'login') {
     return (
       <AuthPage
@@ -68,6 +81,10 @@ export default function App() {
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode((prev) => !prev)}
         onLogout={handleLogout}
+        onOpenAdminDashboard={() => {
+          setView('admin');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
     );
   }
