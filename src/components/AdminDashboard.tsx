@@ -16,13 +16,16 @@ import {
   CompanyBankDetails,
   declineEcoinSubmission,
   declineUpgradeSubmission,
+  DEFAULT_COMPANY_BANK,
   EcoinSubmission,
   getCompanyBankDetails,
-  getEcoinSubmissions,
   getRegisteredUserAmounts,
-  getUpgradeSubmissions,
   RegisteredUserAmount,
   saveCompanyBankDetails,
+  subscribeCompanyBankDetails,
+  subscribeEcoinSubmissions,
+  subscribeRegisteredUserAmounts,
+  subscribeUpgradeSubmissions,
   UpgradeSubmission,
 } from '../utils/evermoreStore';
 
@@ -35,32 +38,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   darkMode,
   onExit,
 }) => {
-  const [bankDetails, setBankDetails] = useState<CompanyBankDetails>(() =>
-    getCompanyBankDetails()
-  );
-  const [submissions, setSubmissions] = useState<EcoinSubmission[]>(() =>
-    getEcoinSubmissions()
-  );
-  const [upgradeSubmissions, setUpgradeSubmissions] = useState<UpgradeSubmission[]>(() =>
-    getUpgradeSubmissions()
-  );
+  const [bankDetails, setBankDetails] = useState<CompanyBankDetails>(DEFAULT_COMPANY_BANK);
+  const [submissions, setSubmissions] = useState<EcoinSubmission[]>([]);
+  const [upgradeSubmissions, setUpgradeSubmissions] = useState<UpgradeSubmission[]>([]);
   const [userSummary, setUserSummary] = useState<{
     totalUsers: number;
     totalBalance: number;
     users: RegisteredUserAmount[];
-  }>(() => getRegisteredUserAmounts());
+  }>({ totalUsers: 0, totalBalance: 0, users: [] });
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'payments' | 'bank' | 'users'>('payments');
-
-  const refreshAll = () => {
-    setBankDetails(getCompanyBankDetails());
-    setSubmissions(getEcoinSubmissions());
-    setUpgradeSubmissions(getUpgradeSubmissions());
-    setUserSummary(getRegisteredUserAmounts());
-  };
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
-    refreshAll();
+    const unsubBank = subscribeCompanyBankDetails((details) => {
+      setBankDetails(details);
+    });
+    const unsubEcoin = subscribeEcoinSubmissions((items) => {
+      setSubmissions(items);
+    });
+    const unsubUpgrade = subscribeUpgradeSubmissions((items) => {
+      setUpgradeSubmissions(items);
+    });
+    const unsubUsers = subscribeRegisteredUserAmounts((summary) => {
+      setUserSummary(summary);
+    });
+
+    return () => {
+      unsubBank();
+      unsubEcoin();
+      unsubUpgrade();
+      unsubUsers();
+    };
   }, []);
 
   const showNotice = (msg: string) => {
@@ -70,7 +79,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }, 3200);
   };
 
-  const handleSaveBank = (e: React.FormEvent) => {
+  const handleManualRefresh = async () => {
+    try {
+      const [bank, summary] = await Promise.all([
+        getCompanyBankDetails(),
+        getRegisteredUserAmounts(),
+      ]);
+      setBankDetails(bank);
+      setUserSummary(summary);
+      showNotice('Synced with Firebase.');
+    } catch {
+      showNotice('Sync check failed.');
+    }
+  };
+
+  const handleSaveBank = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
       !bankDetails.bankName.trim() ||
@@ -79,36 +102,67 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     ) {
       return;
     }
-    saveCompanyBankDetails({
-      bankName: bankDetails.bankName.trim(),
-      accountNumber: bankDetails.accountNumber.trim(),
-      accountName: bankDetails.accountName.trim(),
-    });
-    showNotice('Company bank account details updated on app.');
+    setBusyId('save-bank');
+    try {
+      await saveCompanyBankDetails({
+        bankName: bankDetails.bankName.trim(),
+        accountNumber: bankDetails.accountNumber.trim(),
+        accountName: bankDetails.accountName.trim(),
+      });
+      showNotice('Company bank account details saved to Firebase.');
+    } catch {
+      showNotice('Failed to save bank details. Check Firestore rules.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const handleApprove = (id: string) => {
-    const code = approveEcoinSubmission(id);
-    refreshAll();
-    showNotice(`Payment approved! Ecoin code ${code} issued to user.`);
+  const handleApprove = async (submission: EcoinSubmission) => {
+    setBusyId(submission.id);
+    try {
+      const code = await approveEcoinSubmission(submission);
+      showNotice(`Payment approved! Ecoin code ${code} issued to user.`);
+    } catch {
+      showNotice('Failed to approve Ecoin payment.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const handleDecline = (id: string) => {
-    declineEcoinSubmission(id);
-    refreshAll();
-    showNotice('Payment declined.');
+  const handleDecline = async (id: string) => {
+    setBusyId(id);
+    try {
+      await declineEcoinSubmission(id);
+      showNotice('Payment declined.');
+    } catch {
+      showNotice('Failed to decline payment.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const handleApproveUpgrade = (id: string) => {
-    const tier = approveUpgradeSubmission(id);
-    refreshAll();
-    showNotice(`Upgrade approved! User upgraded to ${tier} tier.`);
+  const handleApproveUpgrade = async (submission: UpgradeSubmission) => {
+    setBusyId(submission.id);
+    try {
+      const tier = await approveUpgradeSubmission(submission);
+      showNotice(`Upgrade approved! User upgraded to ${tier} tier.`);
+    } catch {
+      showNotice('Failed to approve upgrade payment.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const handleDeclineUpgrade = (id: string) => {
-    declineUpgradeSubmission(id);
-    refreshAll();
-    showNotice('Upgrade payment declined.');
+  const handleDeclineUpgrade = async (id: string) => {
+    setBusyId(id);
+    try {
+      await declineUpgradeSubmission(id);
+      showNotice('Upgrade payment declined.');
+    } catch {
+      showNotice('Failed to decline upgrade payment.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const pendingCount =
@@ -138,10 +192,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => {
-                refreshAll();
-                showNotice('Data refreshed.');
-              }}
+              onClick={handleManualRefresh}
               aria-label="Refresh admin data"
               className="w-8 h-8 rounded-full bg-[#f3e8ff] dark:bg-[#220e42] text-[#7c3aed] dark:text-[#c084fc] flex items-center justify-center hover:bg-[#e9d5ff] cursor-pointer"
             >
@@ -295,16 +346,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="grid grid-cols-2 gap-2 pt-1">
                           <button
                             type="button"
-                            onClick={() => handleApproveUpgrade(item.id)}
-                            className="py-2 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
+                            disabled={busyId === item.id}
+                            onClick={() => handleApproveUpgrade(item)}
+                            className="py-2 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             <span>Approve</span>
                           </button>
                           <button
                             type="button"
+                            disabled={busyId === item.id}
                             onClick={() => handleDeclineUpgrade(item.id)}
-                            className="py-2 rounded-full border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
+                            className="py-2 rounded-full border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-60 font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
                           >
                             <XCircle className="w-3.5 h-3.5" />
                             <span>Decline</span>
@@ -386,16 +439,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="grid grid-cols-2 gap-2 pt-1">
                           <button
                             type="button"
-                            onClick={() => handleApprove(item.id)}
-                            className="py-2 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
+                            disabled={busyId === item.id}
+                            onClick={() => handleApprove(item)}
+                            className="py-2 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             <span>Approve</span>
                           </button>
                           <button
                             type="button"
+                            disabled={busyId === item.id}
                             onClick={() => handleDecline(item.id)}
-                            className="py-2 rounded-full border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
+                            className="py-2 rounded-full border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-60 font-bold text-xs cursor-pointer inline-flex items-center justify-center gap-1"
                           >
                             <XCircle className="w-3.5 h-3.5" />
                             <span>Decline</span>
@@ -420,8 +475,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 dark:text-[#c4b5fd]">
-              Whatever account details you save here will immediately display to
-              users on the Ecoin payment page.
+              Whatever account details you save here will immediately sync across
+              Firebase to all users on the Ecoin and Upgrade payment pages.
             </p>
 
             <form onSubmit={handleSaveBank} className="space-y-3.5">
@@ -483,9 +538,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] cursor-pointer"
+                disabled={busyId === 'save-bank'}
+                className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] cursor-pointer"
               >
-                Save Company Account Details
+                {busyId === 'save-bank' ? 'Saving...' : 'Save Company Account Details'}
               </button>
             </form>
           </section>

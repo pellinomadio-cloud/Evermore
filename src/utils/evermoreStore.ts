@@ -1,11 +1,52 @@
+import {
+  arrayUnion,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  Unsubscribe,
+  updateDoc,
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+
+export interface TransactionEntry {
+  id: string;
+  title: string;
+  amount: number;
+  type: 'credit' | 'debit';
+  date: string;
+}
+
+export interface UserWalletData {
+  uid: string;
+  name: string;
+  email: string;
+  balance: number;
+  invitesCount: number;
+  checkInCount: number;
+  earnedTotal: number;
+  purchasedCodes: string[];
+  lastClaimDate: string | null;
+  transactions: TransactionEntry[];
+  watchedVideoIds: string[];
+  accountTier: 'Starter' | 'Silver' | 'Gold VIP';
+  createdAt: string;
+}
+
 export interface CompanyBankDetails {
   bankName: string;
   accountNumber: string;
   accountName: string;
+  updatedAt?: string;
 }
 
 export interface EcoinSubmission {
   id: string;
+  userId: string;
   userName: string;
   userEmail: string;
   plan: 'standard' | 'pro';
@@ -19,6 +60,7 @@ export interface EcoinSubmission {
 
 export interface UpgradeSubmission {
   id: string;
+  userId: string;
   userName: string;
   userEmail: string;
   tier: 'Silver' | 'Gold VIP';
@@ -35,226 +77,445 @@ export interface RegisteredUserAmount {
   balance: number;
 }
 
-const COMPANY_BANK_KEY = 'evermore_company_bank_v1';
-const ECOIN_SUBMISSIONS_KEY = 'evermore_ecoin_submissions_v1';
-const UPGRADE_SUBMISSIONS_KEY = 'evermore_upgrade_submissions_v1';
-const USERS_KEY = 'evermore_users_v1';
-
-const DEFAULT_COMPANY_BANK: CompanyBankDetails = {
+export const DEFAULT_COMPANY_BANK: CompanyBankDetails = {
   bankName: 'Moniepoint MFB',
   accountNumber: '8104927361',
   accountName: 'EverMore Technologies Ltd',
 };
 
-export function getCompanyBankDetails(): CompanyBankDetails {
-  try {
-    const raw = localStorage.getItem(COMPANY_BANK_KEY);
-    if (!raw) return DEFAULT_COMPANY_BANK;
-    const parsed = JSON.parse(raw);
-    return {
-      bankName: parsed.bankName || DEFAULT_COMPANY_BANK.bankName,
-      accountNumber: parsed.accountNumber || DEFAULT_COMPANY_BANK.accountNumber,
-      accountName: parsed.accountName || DEFAULT_COMPANY_BANK.accountName,
+export function deriveFirebaseAuthPassword(pin: string): string {
+  return `EM#${pin.trim()}`;
+}
+
+export async function compressReceiptFile(file: File): Promise<string | undefined> {
+  if (!file.type.startsWith('image/')) return undefined;
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        resolve(undefined);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 720;
+        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(reader.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.65);
+        resolve(compressed.length < 600_000 ? compressed : undefined);
+      };
+      img.onerror = () => resolve(undefined);
+      img.src = reader.result;
     };
-  } catch {
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(file);
+  });
+}
+
+// ==================== USER WALLET & PROFILE ====================
+
+export async function ensureUserWallet(
+  uid: string,
+  name: string,
+  email: string
+): Promise<UserWalletData> {
+  const userPath = `users/${uid}`;
+  const userRef = doc(db, 'users', uid);
+
+  try {
+    const snap = await getDoc(userRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return {
+        uid,
+        name: typeof data.name === 'string' ? data.name : name,
+        email: typeof data.email === 'string' ? data.email : email,
+        balance: typeof data.balance === 'number' ? data.balance : 0,
+        invitesCount: typeof data.invitesCount === 'number' ? data.invitesCount : 0,
+        checkInCount: typeof data.checkInCount === 'number' ? data.checkInCount : 0,
+        earnedTotal: typeof data.earnedTotal === 'number' ? data.earnedTotal : 0,
+        purchasedCodes: Array.isArray(data.purchasedCodes) ? data.purchasedCodes : [],
+        lastClaimDate: typeof data.lastClaimDate === 'string' ? data.lastClaimDate : null,
+        transactions: Array.isArray(data.transactions) ? data.transactions : [],
+        watchedVideoIds: Array.isArray(data.watchedVideoIds) ? data.watchedVideoIds : [],
+        accountTier:
+          data.accountTier === 'Silver' || data.accountTier === 'Gold VIP'
+            ? data.accountTier
+            : 'Starter',
+        createdAt:
+          typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString(),
+      };
+    }
+
+    const initialWallet: UserWalletData = {
+      uid,
+      name: name.trim() || email.split('@')[0] || 'User',
+      email: email.trim().toLowerCase(),
+      balance: 0,
+      invitesCount: 0,
+      checkInCount: 0,
+      earnedTotal: 0,
+      purchasedCodes: [],
+      lastClaimDate: null,
+      transactions: [],
+      watchedVideoIds: [],
+      accountTier: 'Starter',
+      createdAt: new Date().toISOString(),
+    };
+
+    await setDoc(userRef, initialWallet);
+    return initialWallet;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, userPath);
+  }
+}
+
+export function subscribeUserWallet(
+  uid: string,
+  onData: (wallet: UserWalletData) => void
+): Unsubscribe {
+  const userPath = `users/${uid}`;
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      onData({
+        uid,
+        name: typeof data.name === 'string' ? data.name : 'User',
+        email: typeof data.email === 'string' ? data.email : '',
+        balance: typeof data.balance === 'number' ? data.balance : 0,
+        invitesCount: typeof data.invitesCount === 'number' ? data.invitesCount : 0,
+        checkInCount: typeof data.checkInCount === 'number' ? data.checkInCount : 0,
+        earnedTotal: typeof data.earnedTotal === 'number' ? data.earnedTotal : 0,
+        purchasedCodes: Array.isArray(data.purchasedCodes) ? data.purchasedCodes : [],
+        lastClaimDate: typeof data.lastClaimDate === 'string' ? data.lastClaimDate : null,
+        transactions: Array.isArray(data.transactions) ? data.transactions : [],
+        watchedVideoIds: Array.isArray(data.watchedVideoIds) ? data.watchedVideoIds : [],
+        accountTier:
+          data.accountTier === 'Silver' || data.accountTier === 'Gold VIP'
+            ? data.accountTier
+            : 'Starter',
+        createdAt:
+          typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString(),
+      });
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, userPath);
+    }
+  );
+}
+
+export async function updateUserWallet(
+  uid: string,
+  updates: Partial<Omit<UserWalletData, 'uid' | 'createdAt'>>
+): Promise<void> {
+  const userPath = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), updates);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, userPath);
+  }
+}
+
+// ==================== COMPANY BANK DETAILS ====================
+
+export async function getCompanyBankDetails(): Promise<CompanyBankDetails> {
+  const path = 'appConfig/companyBank';
+  try {
+    const snap = await getDoc(doc(db, 'appConfig', 'companyBank'));
+    if (!snap.exists()) return DEFAULT_COMPANY_BANK;
+    const data = snap.data();
+    return {
+      bankName: data.bankName || DEFAULT_COMPANY_BANK.bankName,
+      accountNumber: data.accountNumber || DEFAULT_COMPANY_BANK.accountNumber,
+      accountName: data.accountName || DEFAULT_COMPANY_BANK.accountName,
+      updatedAt: data.updatedAt,
+    };
+  } catch (error) {
+    console.warn('Using default company bank details:', error);
     return DEFAULT_COMPANY_BANK;
   }
 }
 
-export function saveCompanyBankDetails(details: CompanyBankDetails): void {
-  try {
-    localStorage.setItem(COMPANY_BANK_KEY, JSON.stringify(details));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-export function getEcoinSubmissions(): EcoinSubmission[] {
-  try {
-    const raw = localStorage.getItem(ECOIN_SUBMISSIONS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveEcoinSubmissions(submissions: EcoinSubmission[]): void {
-  try {
-    localStorage.setItem(ECOIN_SUBMISSIONS_KEY, JSON.stringify(submissions));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-export function addEcoinSubmission(submission: EcoinSubmission): void {
-  const existing = getEcoinSubmissions();
-  saveEcoinSubmissions([submission, ...existing]);
-}
-
-export function approveEcoinSubmission(submissionId: string): string {
-  const submissions = getEcoinSubmissions();
-  const code = `EC-${Math.floor(100000 + Math.random() * 900000)}`;
-  let targetEmail = '';
-
-  const updated = submissions.map((item) => {
-    if (item.id === submissionId) {
-      targetEmail = item.userEmail.toLowerCase();
-      return {
-        ...item,
-        status: 'approved' as const,
-        ecoinCode: code,
-      };
-    }
-    return item;
-  });
-
-  saveEcoinSubmissions(updated);
-
-  // Also add the approved Ecoin code into the user's dashboard state
-  if (targetEmail) {
-    try {
-      const userStateKey = `evermore_state_${targetEmail}`;
-      const rawUserState = localStorage.getItem(userStateKey);
-      const parsed = rawUserState ? JSON.parse(rawUserState) : {};
-      const prevCodes: string[] = Array.isArray(parsed.purchasedCodes)
-        ? parsed.purchasedCodes
-        : [];
-      if (!prevCodes.includes(code)) {
-        localStorage.setItem(
-          userStateKey,
-          JSON.stringify({
-            ...parsed,
-            purchasedCodes: [code, ...prevCodes],
-          })
-        );
+export function subscribeCompanyBankDetails(
+  onData: (details: CompanyBankDetails) => void
+): Unsubscribe {
+  const path = 'appConfig/companyBank';
+  return onSnapshot(
+    doc(db, 'appConfig', 'companyBank'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(DEFAULT_COMPANY_BANK);
+        return;
       }
-    } catch {
-      // ignore storage errors
+      const data = snap.data();
+      onData({
+        bankName: data.bankName || DEFAULT_COMPANY_BANK.bankName,
+        accountNumber: data.accountNumber || DEFAULT_COMPANY_BANK.accountNumber,
+        accountName: data.accountName || DEFAULT_COMPANY_BANK.accountName,
+        updatedAt: data.updatedAt,
+      });
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
     }
-  }
-
-  return code;
-}
-
-export function declineEcoinSubmission(submissionId: string): void {
-  const submissions = getEcoinSubmissions();
-  const updated = submissions.map((item) =>
-    item.id === submissionId ? { ...item, status: 'declined' as const } : item
   );
-  saveEcoinSubmissions(updated);
 }
 
-export function getUpgradeSubmissions(): UpgradeSubmission[] {
+export async function saveCompanyBankDetails(
+  details: CompanyBankDetails
+): Promise<void> {
+  const path = 'appConfig/companyBank';
   try {
-    const raw = localStorage.getItem(UPGRADE_SUBMISSIONS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+    await setDoc(doc(db, 'appConfig', 'companyBank'), {
+      bankName: details.bankName.trim(),
+      accountNumber: details.accountNumber.trim(),
+      accountName: details.accountName.trim(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
-export function saveUpgradeSubmissions(submissions: UpgradeSubmission[]): void {
+// ==================== ECOIN SUBMISSIONS ====================
+
+export async function addEcoinSubmission(submission: EcoinSubmission): Promise<void> {
+  const path = `ecoinSubmissions/${submission.id}`;
+  const payload: Record<string, unknown> = {
+    id: submission.id,
+    userId: submission.userId,
+    userName: submission.userName,
+    userEmail: submission.userEmail,
+    plan: submission.plan,
+    amount: submission.amount,
+    receiptName: submission.receiptName,
+    status: submission.status,
+    createdAt: submission.createdAt,
+  };
+  if (submission.receiptPreviewUrl) {
+    payload.receiptPreviewUrl = submission.receiptPreviewUrl;
+  }
+
   try {
-    localStorage.setItem(UPGRADE_SUBMISSIONS_KEY, JSON.stringify(submissions));
-  } catch {
-    // ignore storage errors
+    await setDoc(doc(db, 'ecoinSubmissions', submission.id), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
   }
 }
 
-export function addUpgradeSubmission(submission: UpgradeSubmission): void {
-  const existing = getUpgradeSubmissions();
-  saveUpgradeSubmissions([submission, ...existing]);
-}
-
-export function approveUpgradeSubmission(submissionId: string): 'Silver' | 'Gold VIP' | null {
-  const submissions = getUpgradeSubmissions();
-  let targetEmail = '';
-  let approvedTier: 'Silver' | 'Gold VIP' | null = null;
-
-  const updated = submissions.map((item) => {
-    if (item.id === submissionId) {
-      targetEmail = item.userEmail.toLowerCase();
-      approvedTier = item.tier;
-      return {
-        ...item,
-        status: 'approved' as const,
-      };
-    }
-    return item;
-  });
-
-  saveUpgradeSubmissions(updated);
-
-  if (targetEmail && approvedTier) {
-    try {
-      const userStateKey = `evermore_state_${targetEmail}`;
-      const rawUserState = localStorage.getItem(userStateKey);
-      const parsed = rawUserState ? JSON.parse(rawUserState) : {};
-      localStorage.setItem(
-        userStateKey,
-        JSON.stringify({
-          ...parsed,
-          accountTier: approvedTier,
-        })
-      );
-    } catch {
-      // ignore storage errors
-    }
+export async function getEcoinSubmissionById(
+  submissionId: string
+): Promise<EcoinSubmission | null> {
+  const path = `ecoinSubmissions/${submissionId}`;
+  try {
+    const snap = await getDoc(doc(db, 'ecoinSubmissions', submissionId));
+    return snap.exists() ? (snap.data() as EcoinSubmission) : null;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
   }
-
-  return approvedTier;
 }
 
-export function declineUpgradeSubmission(submissionId: string): void {
-  const submissions = getUpgradeSubmissions();
-  const updated = submissions.map((item) =>
-    item.id === submissionId ? { ...item, status: 'declined' as const } : item
+export function subscribeEcoinSubmissions(
+  onData: (items: EcoinSubmission[]) => void
+): Unsubscribe {
+  const path = 'ecoinSubmissions';
+  const q = query(collection(db, path), orderBy('createdAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onData(snapshot.docs.map((d) => d.data() as EcoinSubmission));
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
   );
-  saveUpgradeSubmissions(updated);
 }
 
-export function getRegisteredUserAmounts(): {
+export async function approveEcoinSubmission(
+  submission: EcoinSubmission
+): Promise<string> {
+  const path = `ecoinSubmissions/${submission.id}`;
+  const code = `EC-${Math.floor(100000 + Math.random() * 900000)}`;
+  try {
+    await updateDoc(doc(db, 'ecoinSubmissions', submission.id), {
+      status: 'approved',
+      ecoinCode: code,
+    });
+    if (submission.userId) {
+      await updateDoc(doc(db, 'users', submission.userId), {
+        purchasedCodes: arrayUnion(code),
+      });
+    }
+    return code;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function declineEcoinSubmission(submissionId: string): Promise<void> {
+  const path = `ecoinSubmissions/${submissionId}`;
+  try {
+    await updateDoc(doc(db, 'ecoinSubmissions', submissionId), {
+      status: 'declined',
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+// ==================== ACCOUNT UPGRADE SUBMISSIONS ====================
+
+export async function addUpgradeSubmission(
+  submission: UpgradeSubmission
+): Promise<void> {
+  const path = `upgradeSubmissions/${submission.id}`;
+  const payload: Record<string, unknown> = {
+    id: submission.id,
+    userId: submission.userId,
+    userName: submission.userName,
+    userEmail: submission.userEmail,
+    tier: submission.tier,
+    amount: submission.amount,
+    receiptName: submission.receiptName,
+    status: submission.status,
+    createdAt: submission.createdAt,
+  };
+  if (submission.receiptPreviewUrl) {
+    payload.receiptPreviewUrl = submission.receiptPreviewUrl;
+  }
+
+  try {
+    await setDoc(doc(db, 'upgradeSubmissions', submission.id), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function getUpgradeSubmissionById(
+  submissionId: string
+): Promise<UpgradeSubmission | null> {
+  const path = `upgradeSubmissions/${submissionId}`;
+  try {
+    const snap = await getDoc(doc(db, 'upgradeSubmissions', submissionId));
+    return snap.exists() ? (snap.data() as UpgradeSubmission) : null;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export function subscribeUpgradeSubmissions(
+  onData: (items: UpgradeSubmission[]) => void
+): Unsubscribe {
+  const path = 'upgradeSubmissions';
+  const q = query(collection(db, path), orderBy('createdAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onData(snapshot.docs.map((d) => d.data() as UpgradeSubmission));
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function approveUpgradeSubmission(
+  submission: UpgradeSubmission
+): Promise<'Silver' | 'Gold VIP'> {
+  const path = `upgradeSubmissions/${submission.id}`;
+  try {
+    await updateDoc(doc(db, 'upgradeSubmissions', submission.id), {
+      status: 'approved',
+    });
+    if (submission.userId) {
+      await updateDoc(doc(db, 'users', submission.userId), {
+        accountTier: submission.tier,
+      });
+    }
+    return submission.tier;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function declineUpgradeSubmission(submissionId: string): Promise<void> {
+  const path = `upgradeSubmissions/${submissionId}`;
+  try {
+    await updateDoc(doc(db, 'upgradeSubmissions', submissionId), {
+      status: 'declined',
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+// ==================== REGISTERED USER AMOUNTS (AMOUNTS ONLY, NO PII) ====================
+
+export async function getRegisteredUserAmounts(): Promise<{
   totalUsers: number;
   totalBalance: number;
   users: RegisteredUserAmount[];
-} {
+}> {
+  const path = 'users';
   try {
-    const rawUsers = localStorage.getItem(USERS_KEY);
-    const parsedUsers: Array<{ name?: string; email?: string; balance?: number }> =
-      rawUsers ? JSON.parse(rawUsers) : [];
-
-    const users: RegisteredUserAmount[] = parsedUsers.map((u, index) => {
-      const email = (u.email || '').toLowerCase();
-      let liveBalance = typeof u.balance === 'number' ? u.balance : 0;
-
-      if (email) {
-        try {
-          const rawState = localStorage.getItem(`evermore_state_${email}`);
-          if (rawState) {
-            const stateParsed = JSON.parse(rawState);
-            if (typeof stateParsed.balance === 'number') {
-              liveBalance = stateParsed.balance;
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-
+    const snap = await getDocs(collection(db, path));
+    const users: RegisteredUserAmount[] = snap.docs.map((d, index) => {
+      const data = d.data();
       return {
-        id: `user-${index + 1}`,
-        name: u.name || `Member #${index + 1}`,
-        balance: liveBalance,
+        id: d.id,
+        name: typeof data.name === 'string' ? data.name : `Member #${index + 1}`,
+        balance: typeof data.balance === 'number' ? data.balance : 0,
       };
     });
-
     const totalBalance = users.reduce((sum, u) => sum + u.balance, 0);
     return {
       totalUsers: users.length,
       totalBalance,
       users,
     };
-  } catch {
-    return { totalUsers: 0, totalBalance: 0, users: [] };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
   }
+}
+
+export function subscribeRegisteredUserAmounts(
+  onData: (summary: {
+    totalUsers: number;
+    totalBalance: number;
+    users: RegisteredUserAmount[];
+  }) => void
+): Unsubscribe {
+  const path = 'users';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const users: RegisteredUserAmount[] = snapshot.docs.map((d, index) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          name: typeof data.name === 'string' ? data.name : `Member #${index + 1}`,
+          balance: typeof data.balance === 'number' ? data.balance : 0,
+        };
+      });
+      const totalBalance = users.reduce((sum, u) => sum + u.balance, 0);
+      onData({
+        totalUsers: users.length,
+        totalBalance,
+        users,
+      });
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
 }

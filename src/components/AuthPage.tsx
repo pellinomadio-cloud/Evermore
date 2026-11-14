@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock, Mail, User } from 'lucide-react';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+} from 'firebase/auth';
+import { auth } from '../firebase';
+import { deriveFirebaseAuthPassword, ensureUserWallet } from '../utils/evermoreStore';
 import { GpayLogo } from './GpayLogo';
 
 export interface UserAccount {
+  uid: string;
   name: string;
   email: string;
-  pin: string;
   balance: number;
   createdAt: string;
 }
@@ -17,7 +24,29 @@ interface AuthPageProps {
   onSuccess: (user: UserAccount) => void;
 }
 
-const STORAGE_KEY = 'evermore_users_v1';
+function mapFirebaseAuthError(err: unknown): string {
+  const code = (err as { code?: string })?.code || '';
+  if (code === 'auth/email-already-in-use') {
+    return 'An account with this email already exists. Please login instead.';
+  }
+  if (
+    code === 'auth/invalid-credential' ||
+    code === 'auth/wrong-password' ||
+    code === 'auth/user-not-found'
+  ) {
+    return 'Invalid email or 4-digit password. Please check and try again.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Email/Password sign-in is not enabled yet in your Firebase Console (Authentication → Sign-in method).';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Network error. Please check your internet connection.';
+  }
+  if (err instanceof Error && err.message.includes('Missing or insufficient permissions')) {
+    return 'Firestore permissions are not configured yet. Please publish firestore.rules in your Firebase Console.';
+  }
+  return err instanceof Error ? err.message : 'Authentication failed. Please try again.';
+}
 
 export const AuthPage: React.FC<AuthPageProps> = ({
   initialMode,
@@ -31,6 +60,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 4);
@@ -38,29 +68,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     if (error) setError('');
   };
 
-  const getStoredUsers = (): UserAccount[] => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const saveUser = (newUser: UserAccount) => {
-    try {
-      const users = getStoredUsers();
-      const filtered = users.filter(
-        (u) => u.email.toLowerCase() !== newUser.email.toLowerCase()
-      );
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([newUser, ...filtered]));
-    } catch {
-      // Fallback if storage is restricted
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError('');
 
     const trimmedName = name.trim();
@@ -80,16 +90,27 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         return;
       }
 
-      const newUser: UserAccount = {
-        name: trimmedName,
-        email: trimmedEmail,
-        pin,
-        balance: 0,
-        createdAt: new Date().toISOString(),
-      };
-
-      saveUser(newUser);
-      onSuccess(newUser);
+      setIsSubmitting(true);
+      try {
+        const cred = await createUserWithEmailAndPassword(
+          auth,
+          trimmedEmail,
+          deriveFirebaseAuthPassword(pin)
+        );
+        await updateProfile(cred.user, { displayName: trimmedName });
+        const wallet = await ensureUserWallet(cred.user.uid, trimmedName, trimmedEmail);
+        onSuccess({
+          uid: wallet.uid,
+          name: wallet.name,
+          email: wallet.email,
+          balance: wallet.balance,
+          createdAt: wallet.createdAt,
+        });
+      } catch (err) {
+        setError(mapFirebaseAuthError(err));
+      } finally {
+        setIsSubmitting(false);
+      }
     } else {
       if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
         setError('Please enter your email address.');
@@ -100,27 +121,29 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         return;
       }
 
-      const users = getStoredUsers();
-      const existing = users.find(
-        (u) => u.email.toLowerCase() === trimmedEmail
-      );
-
-      if (existing) {
-        if (existing.pin !== pin) {
-          setError('Incorrect 4-digit password. Please try again.');
-          return;
-        }
-        onSuccess(existing);
-      } else {
-        const fallbackUser: UserAccount = {
-          name: trimmedEmail.split('@')[0],
-          email: trimmedEmail,
-          pin,
-          balance: 0,
-          createdAt: new Date().toISOString(),
-        };
-        saveUser(fallbackUser);
-        onSuccess(fallbackUser);
+      setIsSubmitting(true);
+      try {
+        const cred = await signInWithEmailAndPassword(
+          auth,
+          trimmedEmail,
+          deriveFirebaseAuthPassword(pin)
+        );
+        const wallet = await ensureUserWallet(
+          cred.user.uid,
+          cred.user.displayName || trimmedEmail.split('@')[0],
+          trimmedEmail
+        );
+        onSuccess({
+          uid: wallet.uid,
+          name: wallet.name,
+          email: wallet.email,
+          balance: wallet.balance,
+          createdAt: wallet.createdAt,
+        });
+      } catch (err) {
+        setError(mapFirebaseAuthError(err));
+      } finally {
+        setIsSubmitting(false);
       }
     }
   };
@@ -259,9 +282,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
             <button
               type="submit"
-              className="w-full py-2.5 px-5 rounded-xl bg-[#7c3aed] hover:bg-[#6d28d9] active:scale-[0.99] text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] transition-all cursor-pointer mt-1"
+              disabled={isSubmitting}
+              className="w-full py-2.5 px-5 rounded-xl bg-[#7c3aed] hover:bg-[#6d28d9] active:scale-[0.99] disabled:opacity-70 text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] transition-all cursor-pointer mt-1 inline-flex items-center justify-center gap-2"
             >
-              {mode === 'register' ? 'Create Account' : 'Login'}
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>
+                {isSubmitting
+                  ? mode === 'register'
+                    ? 'Creating Account...'
+                    : 'Logging In...'
+                  : mode === 'register'
+                  ? 'Create Account'
+                  : 'Login'}
+              </span>
             </button>
           </form>
 

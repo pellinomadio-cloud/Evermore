@@ -1,0 +1,132 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidUserWallet(data, userId) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'balance', 'accountTier', 'createdAt'])
+        && data.keys().hasOnly([
+          'uid',
+          'name',
+          'email',
+          'balance',
+          'invitesCount',
+          'checkInCount',
+          'earnedTotal',
+          'purchasedCodes',
+          'lastClaimDate',
+          'transactions',
+          'watchedVideoIds',
+          'accountTier',
+          'createdAt'
+        ])
+        && data.uid is string && data.uid == userId
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.balance is number && data.balance >= 0
+        && data.accountTier in ['Starter', 'Silver', 'Gold VIP']
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidBankConfig(data) {
+      return data.keys().hasAll(['bankName', 'accountNumber', 'accountName'])
+        && data.keys().hasOnly(['bankName', 'accountNumber', 'accountName', 'updatedAt'])
+        && data.bankName is string && data.bankName.size() >= 2 && data.bankName.size() <= 100
+        && data.accountNumber is string && data.accountNumber.size() == 10
+        && data.accountName is string && data.accountName.size() >= 2 && data.accountName.size() <= 120;
+    }
+
+    function isValidEcoinSubmission(data) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'userEmail', 'plan', 'amount', 'receiptName', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'userName',
+          'userEmail',
+          'plan',
+          'amount',
+          'receiptName',
+          'receiptPreviewUrl',
+          'status',
+          'ecoinCode',
+          'createdAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() <= 120
+        && data.userEmail is string && data.userEmail.size() <= 160
+        && data.plan in ['standard', 'pro']
+        && data.amount is number && data.amount > 0
+        && data.receiptName is string && data.receiptName.size() <= 200
+        && data.status in ['pending', 'approved', 'declined']
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidUpgradeSubmission(data) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'userEmail', 'tier', 'amount', 'receiptName', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'userName',
+          'userEmail',
+          'tier',
+          'amount',
+          'receiptName',
+          'receiptPreviewUrl',
+          'status',
+          'createdAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() <= 120
+        && data.userEmail is string && data.userEmail.size() <= 160
+        && data.tier in ['Silver', 'Gold VIP']
+        && data.amount is number && data.amount > 0
+        && data.receiptName is string && data.receiptName.size() <= 200
+        && data.status in ['pending', 'approved', 'declined']
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUserWallet(incoming(), userId);
+      allow update: if isSignedIn() && isValidId(userId) && isValidUserWallet(incoming(), userId) && incoming().uid == resource.data.uid && incoming().createdAt == resource.data.createdAt;
+    }
+
+    match /appConfig/{docId} {
+      allow get: if true;
+      allow create, update: if isSignedIn() && docId == 'companyBank' && isValidBankConfig(incoming());
+    }
+
+    match /ecoinSubmissions/{submissionId} {
+      allow get: if isSignedIn() && isValidId(submissionId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(submissionId) && incoming().userId == request.auth.uid && incoming().status == 'pending' && isValidEcoinSubmission(incoming());
+      allow update: if isSignedIn() && isValidId(submissionId) && isValidEcoinSubmission(incoming()) && incoming().userId == resource.data.userId;
+    }
+
+    match /upgradeSubmissions/{submissionId} {
+      allow get: if isSignedIn() && isValidId(submissionId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(submissionId) && incoming().userId == request.auth.uid && incoming().status == 'pending' && isValidUpgradeSubmission(incoming());
+      allow update: if isSignedIn() && isValidId(submissionId) && isValidUpgradeSubmission(incoming()) && incoming().userId == resource.data.userId;
+    }
+  }
+}

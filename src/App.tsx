@@ -4,6 +4,9 @@
  */
 
 import { useEffect, useState } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth, analyticsPromise } from './firebase';
+import { ensureUserWallet } from './utils/evermoreStore';
 import { LandingPage } from './components/LandingPage';
 import { AuthPage, UserAccount } from './components/AuthPage';
 import { DashboardPage } from './components/DashboardPage';
@@ -11,12 +14,15 @@ import { AdminDashboard } from './components/AdminDashboard';
 
 type ViewState = 'landing' | 'register' | 'login' | 'dashboard' | 'admin';
 
-const ACTIVE_USER_KEY = 'evermore_active_user_v1';
-
 export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [view, setView] = useState<ViewState>('landing');
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    void analyticsPromise;
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -27,29 +33,64 @@ export default function App() {
     }
   }, [darkMode]);
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser && firebaseUser.email) {
+        try {
+          const wallet = await ensureUserWallet(
+            firebaseUser.uid,
+            firebaseUser.displayName || firebaseUser.email.split('@')[0],
+            firebaseUser.email
+          );
+          setCurrentUser({
+            uid: wallet.uid,
+            name: wallet.name,
+            email: wallet.email,
+            balance: wallet.balance,
+            createdAt: wallet.createdAt,
+          });
+          setView((prev) => (prev === 'admin' ? 'admin' : 'dashboard'));
+        } catch (err) {
+          console.error('Failed to sync user wallet:', err);
+        }
+      } else {
+        setCurrentUser(null);
+        setView((prev) =>
+          prev === 'dashboard' || prev === 'admin' ? 'landing' : prev
+        );
+      }
+      setAuthReady(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   const handleAuthSuccess = (user: UserAccount) => {
     setCurrentUser(user);
-    try {
-      localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(user));
-    } catch {
-      // ignore storage errors
-    }
     setDarkMode(false);
     setView('dashboard');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
+  const handleLogout = async () => {
     try {
-      localStorage.removeItem(ACTIVE_USER_KEY);
+      await signOut(auth);
     } catch {
-      // ignore storage errors
+      // ignore signOut errors
     }
+    setCurrentUser(null);
     setDarkMode(false);
     setView('landing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-[#faf7ff] dark:bg-[#0f051d] flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-3 border-purple-200 border-t-[#7c3aed] animate-spin" />
+      </div>
+    );
+  }
 
   if (view === 'admin') {
     return (

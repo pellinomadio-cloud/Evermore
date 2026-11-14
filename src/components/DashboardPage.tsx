@@ -39,9 +39,15 @@ import {
   addEcoinSubmission,
   addUpgradeSubmission,
   CompanyBankDetails,
+  compressReceiptFile,
+  DEFAULT_COMPANY_BANK,
   getCompanyBankDetails,
-  getEcoinSubmissions,
-  getUpgradeSubmissions,
+  getEcoinSubmissionById,
+  getUpgradeSubmissionById,
+  subscribeCompanyBankDetails,
+  subscribeUserWallet,
+  TransactionEntry,
+  updateUserWallet,
 } from '../utils/evermoreStore';
 
 interface DashboardPageProps {
@@ -100,59 +106,22 @@ const NIGERIAN_BANKS = [
   'Zenith Bank',
 ];
 
-interface TransactionEntry {
-  id: string;
-  title: string;
-  amount: number;
-  type: 'credit' | 'debit';
-  date: string;
-}
-
-interface StoredDashboardState {
-  balance: number;
-  invitesCount: number;
-  checkInCount: number;
-  earnedTotal: number;
-  purchasedCodes: string[];
-  lastClaimDate: string | null;
-  transactions: TransactionEntry[];
-  watchedVideoIds: string[];
-  accountTier: 'Starter' | 'Silver' | 'Gold VIP';
-}
-
-function readDashboardState(storageKey: string, fallbackBalance: number): StoredDashboardState {
-  try {
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return {
-        balance: typeof parsed.balance === 'number' ? parsed.balance : fallbackBalance,
-        invitesCount: typeof parsed.invitesCount === 'number' ? parsed.invitesCount : 0,
-        checkInCount: typeof parsed.checkInCount === 'number' ? parsed.checkInCount : 0,
-        earnedTotal: typeof parsed.earnedTotal === 'number' ? parsed.earnedTotal : 0,
-        purchasedCodes: Array.isArray(parsed.purchasedCodes) ? parsed.purchasedCodes : [],
-        lastClaimDate: typeof parsed.lastClaimDate === 'string' ? parsed.lastClaimDate : null,
-        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-        watchedVideoIds: Array.isArray(parsed.watchedVideoIds) ? parsed.watchedVideoIds : [],
-        accountTier:
-          parsed.accountTier === 'Silver' || parsed.accountTier === 'Gold VIP'
-            ? parsed.accountTier
-            : 'Starter',
-      };
-    }
-  } catch {
-    // ignore storage errors
-  }
+function createTransactionEntry(
+  title: string,
+  amount: number,
+  type: 'credit' | 'debit'
+): TransactionEntry {
   return {
-    balance: fallbackBalance,
-    invitesCount: 0,
-    checkInCount: 0,
-    earnedTotal: 0,
-    purchasedCodes: [],
-    lastClaimDate: null,
-    transactions: [],
-    watchedVideoIds: [],
-    accountTier: 'Starter',
+    id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    title,
+    amount,
+    type,
+    date: new Date().toLocaleString('en-NG', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
   };
 }
 
@@ -163,28 +132,23 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onLogout,
   onOpenAdminDashboard,
 }) => {
-  const storageKey = `evermore_state_${user.email.toLowerCase()}`;
-  const initialState = readDashboardState(storageKey, user.balance ?? 0);
-
   const [subPage, setSubPage] = useState<SubPageType>('home');
   const [isLeftDrawerOpen, setIsLeftDrawerOpen] = useState(false);
   const [showKeyPrompt, setShowKeyPrompt] = useState(false);
   const [accessKeyInput, setAccessKeyInput] = useState('');
   const [accessKeyError, setAccessKeyError] = useState('');
-  const [balance, setBalance] = useState<number>(initialState.balance);
+  const [balance, setBalance] = useState<number>(user.balance ?? 0);
   const [currencyView, setCurrencyView] = useState<'NGN' | 'ECOIN'>('NGN');
   const [hideBalance, setHideBalance] = useState(false);
-  const [invitesCount, setInvitesCount] = useState(initialState.invitesCount);
-  const [checkInCount, setCheckInCount] = useState(initialState.checkInCount);
-  const [earnedTotal, setEarnedTotal] = useState(initialState.earnedTotal);
+  const [invitesCount, setInvitesCount] = useState(0);
+  const [checkInCount, setCheckInCount] = useState(0);
+  const [earnedTotal, setEarnedTotal] = useState(0);
 
   // Purchased Ecoin withdrawal codes owned by this user
-  const [purchasedCodes, setPurchasedCodes] = useState<string[]>(initialState.purchasedCodes);
-  const [transactions, setTransactions] = useState<TransactionEntry[]>(initialState.transactions);
-  const [watchedVideoIds, setWatchedVideoIds] = useState<string[]>(initialState.watchedVideoIds);
-  const [accountTier, setAccountTier] = useState<'Starter' | 'Silver' | 'Gold VIP'>(
-    initialState.accountTier
-  );
+  const [purchasedCodes, setPurchasedCodes] = useState<string[]>([]);
+  const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
+  const [watchedVideoIds, setWatchedVideoIds] = useState<string[]>([]);
+  const [accountTier, setAccountTier] = useState<'Starter' | 'Silver' | 'Gold VIP'>('Starter');
   const [activeWatchVideo, setActiveWatchVideo] = useState<{
     id: string;
     title: string;
@@ -203,9 +167,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [withdrawSuccess, setWithdrawSuccess] = useState('');
 
   // Buy Ecoin & Payment Proof State
-  const [companyBank, setCompanyBank] = useState<CompanyBankDetails>(() =>
-    getCompanyBankDetails()
-  );
+  const [companyBank, setCompanyBank] = useState<CompanyBankDetails>(DEFAULT_COMPANY_BANK);
   const [selectedEcoinPlan, setSelectedEcoinPlan] = useState<'standard' | 'pro'>('standard');
   const [isLoadingPaymentPage, setIsLoadingPaymentPage] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<string | null>(null);
@@ -215,7 +177,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     'idle' | 'pending' | 'approved' | 'declined'
   >('idle');
   const [newlyGeneratedCode, setNewlyGeneratedCode] = useState<string | null>(null);
-  const [lastClaimDate, setLastClaimDate] = useState<string | null>(initialState.lastClaimDate);
+  const [lastClaimDate, setLastClaimDate] = useState<string | null>(null);
 
   // Upgrade Plan Payment & Approval State
   const [selectedUpgradePlan, setSelectedUpgradePlan] = useState<{
@@ -237,68 +199,29 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [serviceStatus, setServiceStatus] = useState<string | null>(null);
   const [supportMessage, setSupportMessage] = useState('');
 
-  // Re-sync if active user storageKey changes
+  // Real-time Firestore subscriptions for user wallet and company bank config
   useEffect(() => {
-    const loaded = readDashboardState(storageKey, user.balance ?? 0);
-    setBalance(loaded.balance);
-    setInvitesCount(loaded.invitesCount);
-    setCheckInCount(loaded.checkInCount);
-    setEarnedTotal(loaded.earnedTotal);
-    setPurchasedCodes(loaded.purchasedCodes);
-    setLastClaimDate(loaded.lastClaimDate);
-    setTransactions(loaded.transactions);
-    setWatchedVideoIds(loaded.watchedVideoIds);
-    setAccountTier(loaded.accountTier);
-  }, [storageKey, user.balance]);
+    const unsubWallet = subscribeUserWallet(user.uid, (wallet) => {
+      setBalance(wallet.balance);
+      setInvitesCount(wallet.invitesCount);
+      setCheckInCount(wallet.checkInCount);
+      setEarnedTotal(wallet.earnedTotal);
+      setPurchasedCodes(wallet.purchasedCodes);
+      setLastClaimDate(wallet.lastClaimDate);
+      setTransactions(wallet.transactions);
+      setWatchedVideoIds(wallet.watchedVideoIds);
+      setAccountTier(wallet.accountTier);
+    });
 
-  // Save state changes
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          balance,
-          invitesCount,
-          checkInCount,
-          earnedTotal,
-          purchasedCodes,
-          lastClaimDate,
-          transactions,
-          watchedVideoIds,
-          accountTier,
-        })
-      );
-    } catch {
-      // ignore storage errors
-    }
-  }, [
-    balance,
-    invitesCount,
-    checkInCount,
-    earnedTotal,
-    purchasedCodes,
-    lastClaimDate,
-    transactions,
-    watchedVideoIds,
-    accountTier,
-    storageKey,
-  ]);
+    const unsubBank = subscribeCompanyBankDetails((details) => {
+      setCompanyBank(details);
+    });
 
-  const recordTransaction = (title: string, amount: number, type: 'credit' | 'debit') => {
-    const entry: TransactionEntry = {
-      id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      title,
-      amount,
-      type,
-      date: new Date().toLocaleString('en-NG', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
+    return () => {
+      unsubWallet();
+      unsubBank();
     };
-    setTransactions((prev) => [entry, ...prev].slice(0, 50));
-  };
+  }, [user.uid]);
 
   const firstName = user.name.trim().split(/\s+/)[0] || 'User';
 
@@ -320,18 +243,36 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const todayKey = new Date().toISOString().slice(0, 10);
   const alreadyClaimedToday = lastClaimDate === todayKey;
 
-  const handleDailyClaim = () => {
+  const handleDailyClaim = async () => {
     if (alreadyClaimedToday) {
       showToast("You've already claimed today's ₦67,000 bonus. Come back tomorrow!");
       return;
     }
     const reward = 67000;
-    setBalance((prev) => prev + reward);
-    setCheckInCount((prev) => prev + 1);
-    setEarnedTotal((prev) => prev + reward);
+    const nextBalance = balance + reward;
+    const nextCheckIn = checkInCount + 1;
+    const nextEarned = earnedTotal + reward;
+    const entry = createTransactionEntry('Daily Check-in Bonus', reward, 'credit');
+    const nextTransactions = [entry, ...transactions].slice(0, 50);
+
+    setBalance(nextBalance);
+    setCheckInCount(nextCheckIn);
+    setEarnedTotal(nextEarned);
     setLastClaimDate(todayKey);
-    recordTransaction('Daily Check-in Bonus', reward, 'credit');
+    setTransactions(nextTransactions);
     showToast('+₦67,000 daily bonus added to your balance!');
+
+    try {
+      await updateUserWallet(user.uid, {
+        balance: nextBalance,
+        checkInCount: nextCheckIn,
+        earnedTotal: nextEarned,
+        lastClaimDate: todayKey,
+        transactions: nextTransactions,
+      });
+    } catch {
+      showToast('Could not sync claim to Firebase.');
+    }
   };
 
   // Watch to Earn countdown timer
@@ -341,11 +282,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       const completed = activeWatchVideo;
       setActiveWatchVideo(null);
       if (!watchedVideoIds.includes(completed.id)) {
-        setWatchedVideoIds((prev) => [...prev, completed.id]);
-        setBalance((prev) => prev + completed.reward);
-        setEarnedTotal((prev) => prev + completed.reward);
-        recordTransaction(`Watch to Earn: ${completed.title}`, completed.reward, 'credit');
+        const nextWatched = [...watchedVideoIds, completed.id];
+        const nextBalance = balance + completed.reward;
+        const nextEarned = earnedTotal + completed.reward;
+        const entry = createTransactionEntry(
+          `Watch to Earn: ${completed.title}`,
+          completed.reward,
+          'credit'
+        );
+        const nextTransactions = [entry, ...transactions].slice(0, 50);
+
+        setWatchedVideoIds(nextWatched);
+        setBalance(nextBalance);
+        setEarnedTotal(nextEarned);
+        setTransactions(nextTransactions);
         showToast(`+₦${completed.reward.toLocaleString('en-NG')} earned from watching!`);
+
+        void updateUserWallet(user.uid, {
+          watchedVideoIds: nextWatched,
+          balance: nextBalance,
+          earnedTotal: nextEarned,
+          transactions: nextTransactions,
+        });
       }
       return;
     }
@@ -353,13 +311,20 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setWatchSecondsLeft((prev) => prev - 1);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [activeWatchVideo, watchSecondsLeft, watchedVideoIds]);
+  }, [
+    activeWatchVideo,
+    watchSecondsLeft,
+    watchedVideoIds,
+    balance,
+    earnedTotal,
+    transactions,
+    user.uid,
+  ]);
 
   const handleStartPurchaseCoin = (plan?: 'standard' | 'pro') => {
     if (plan) {
       setSelectedEcoinPlan(plan);
     }
-    setCompanyBank(getCompanyBankDetails());
     setIsLoadingPaymentPage(true);
     setPaymentProofFile(null);
     setPaymentProofPreview(undefined);
@@ -367,144 +332,153 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     setPaymentApprovalStatus('idle');
     setNewlyGeneratedCode(null);
     navigateTo('ecoin_payment');
+    void getCompanyBankDetails().then((details) => setCompanyBank(details));
     setTimeout(() => {
       setIsLoadingPaymentPage(false);
     }, 1200);
   };
 
-  const handleUploadProofChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadProofChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setPaymentProofFile(file.name);
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            setPaymentProofPreview(reader.result);
-          }
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setPaymentProofPreview(undefined);
-      }
+      const compressed = await compressReceiptFile(file);
+      setPaymentProofPreview(compressed);
     }
   };
 
-  const handleSubmitPaymentForApproval = (e: React.FormEvent) => {
+  const handleSubmitPaymentForApproval = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paymentProofFile) {
       showToast('Please upload your payment receipt first.');
       return;
     }
     const submissionId = `sub-${Date.now()}`;
-    addEcoinSubmission({
-      id: submissionId,
-      userName: user.name,
-      userEmail: user.email,
-      plan: selectedEcoinPlan,
-      amount: selectedEcoinPlan === 'standard' ? 5500 : 10000,
-      receiptName: paymentProofFile,
-      receiptPreviewUrl: paymentProofPreview,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    });
-    setActiveSubmissionId(submissionId);
-    setPaymentApprovalStatus('pending');
-    showToast('Payment receipt submitted for approval.');
+    try {
+      await addEcoinSubmission({
+        id: submissionId,
+        userId: user.uid,
+        userName: user.name,
+        userEmail: user.email,
+        plan: selectedEcoinPlan,
+        amount: selectedEcoinPlan === 'standard' ? 5500 : 10000,
+        receiptName: paymentProofFile,
+        receiptPreviewUrl: paymentProofPreview,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      });
+      setActiveSubmissionId(submissionId);
+      setPaymentApprovalStatus('pending');
+      showToast('Payment receipt submitted for approval.');
+    } catch {
+      showToast('Failed to submit receipt. Check Firebase connection.');
+    }
   };
 
-  const handleCheckCompanyApproval = () => {
+  const handleCheckCompanyApproval = async () => {
     if (!activeSubmissionId) return;
-    const allSubs = getEcoinSubmissions();
-    const match = allSubs.find((s) => s.id === activeSubmissionId);
-    if (!match) return;
+    try {
+      const match = await getEcoinSubmissionById(activeSubmissionId);
+      if (!match) return;
 
-    if (match.status === 'approved' && match.ecoinCode) {
-      setPurchasedCodes((prev) =>
-        prev.includes(match.ecoinCode!) ? prev : [match.ecoinCode!, ...prev]
-      );
-      setNewlyGeneratedCode(match.ecoinCode);
-      setPaymentApprovalStatus('approved');
-      showToast(`Approved! Your Ecoin code is ${match.ecoinCode}`);
-    } else if (match.status === 'declined') {
-      setPaymentApprovalStatus('declined');
-      showToast('Payment was declined. Please upload a valid receipt.');
-    } else {
-      showToast('Still pending review. Please check back shortly.');
+      if (match.status === 'approved' && match.ecoinCode) {
+        setPurchasedCodes((prev) =>
+          prev.includes(match.ecoinCode!) ? prev : [match.ecoinCode!, ...prev]
+        );
+        setNewlyGeneratedCode(match.ecoinCode);
+        setPaymentApprovalStatus('approved');
+        showToast(`Approved! Your Ecoin code is ${match.ecoinCode}`);
+      } else if (match.status === 'declined') {
+        setPaymentApprovalStatus('declined');
+        showToast('Payment was declined. Please upload a valid receipt.');
+      } else {
+        showToast('Still pending review. Please check back shortly.');
+      }
+    } catch {
+      showToast('Could not check status right now.');
     }
   };
 
   const handleStartUpgradePayment = (tier: 'Silver' | 'Gold VIP', fee: number) => {
     setSelectedUpgradePlan({ tier, fee });
-    setCompanyBank(getCompanyBankDetails());
     setIsLoadingUpgradePayment(true);
     setUpgradeProofFile(null);
     setUpgradeProofPreview(undefined);
     setActiveUpgradeSubId(null);
     setUpgradeApprovalStatus('idle');
     navigateTo('upgrade_payment');
+    void getCompanyBankDetails().then((details) => setCompanyBank(details));
     setTimeout(() => {
       setIsLoadingUpgradePayment(false);
     }, 1200);
   };
 
-  const handleUpgradeProofChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpgradeProofChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setUpgradeProofFile(file.name);
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            setUpgradeProofPreview(reader.result);
-          }
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setUpgradeProofPreview(undefined);
-      }
+      const compressed = await compressReceiptFile(file);
+      setUpgradeProofPreview(compressed);
     }
   };
 
-  const handleSubmitUpgradeForApproval = (e: React.FormEvent) => {
+  const handleSubmitUpgradeForApproval = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!upgradeProofFile) {
       showToast('Please upload your payment receipt first.');
       return;
     }
     const submissionId = `upg-${Date.now()}`;
-    addUpgradeSubmission({
-      id: submissionId,
-      userName: user.name,
-      userEmail: user.email,
-      tier: selectedUpgradePlan.tier,
-      amount: selectedUpgradePlan.fee,
-      receiptName: upgradeProofFile,
-      receiptPreviewUrl: upgradeProofPreview,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    });
-    setActiveUpgradeSubId(submissionId);
-    setUpgradeApprovalStatus('pending');
-    showToast('Upgrade payment submitted for approval.');
+    try {
+      await addUpgradeSubmission({
+        id: submissionId,
+        userId: user.uid,
+        userName: user.name,
+        userEmail: user.email,
+        tier: selectedUpgradePlan.tier,
+        amount: selectedUpgradePlan.fee,
+        receiptName: upgradeProofFile,
+        receiptPreviewUrl: upgradeProofPreview,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      });
+      setActiveUpgradeSubId(submissionId);
+      setUpgradeApprovalStatus('pending');
+      showToast('Upgrade payment submitted for approval.');
+    } catch {
+      showToast('Failed to submit upgrade receipt. Check Firebase connection.');
+    }
   };
 
-  const handleCheckUpgradeApproval = () => {
+  const handleCheckUpgradeApproval = async () => {
     if (!activeUpgradeSubId) return;
-    const allSubs = getUpgradeSubmissions();
-    const match = allSubs.find((s) => s.id === activeUpgradeSubId);
-    if (!match) return;
+    try {
+      const match = await getUpgradeSubmissionById(activeUpgradeSubId);
+      if (!match) return;
 
-    if (match.status === 'approved') {
-      setAccountTier(match.tier);
-      setUpgradeApprovalStatus('approved');
-      recordTransaction(`Upgraded to ${match.tier} Tier`, match.amount, 'debit');
-      showToast(`Approved! Your account is now ${match.tier} Tier.`);
-    } else if (match.status === 'declined') {
-      setUpgradeApprovalStatus('declined');
-      showToast('Upgrade payment was declined. Please upload a valid receipt.');
-    } else {
-      showToast('Still pending review. Please check back shortly.');
+      if (match.status === 'approved') {
+        const entry = createTransactionEntry(
+          `Upgraded to ${match.tier} Tier`,
+          match.amount,
+          'debit'
+        );
+        const nextTransactions = [entry, ...transactions].slice(0, 50);
+        setAccountTier(match.tier);
+        setTransactions(nextTransactions);
+        setUpgradeApprovalStatus('approved');
+        void updateUserWallet(user.uid, {
+          accountTier: match.tier,
+          transactions: nextTransactions,
+        });
+        showToast(`Approved! Your account is now ${match.tier} Tier.`);
+      } else if (match.status === 'declined') {
+        setUpgradeApprovalStatus('declined');
+        showToast('Upgrade payment was declined. Please upload a valid receipt.');
+      } else {
+        showToast('Still pending review. Please check back shortly.');
+      }
+    } catch {
+      showToast('Could not check status right now.');
     }
   };
 
@@ -520,7 +494,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     }
   };
 
-  const handleWithdrawSubmit = (e: React.FormEvent) => {
+  const handleWithdrawSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setWithdrawError('');
     setWithdrawSuccess('');
@@ -568,8 +542,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     }
 
     // Consume balance and mark withdrawal complete
-    setBalance((prev) => prev - amountNum);
-    recordTransaction(`Withdrawal to ${withdrawBank}`, amountNum, 'debit');
+    const nextBalance = balance - amountNum;
+    const entry = createTransactionEntry(`Withdrawal to ${withdrawBank}`, amountNum, 'debit');
+    const nextTransactions = [entry, ...transactions].slice(0, 50);
+
+    setBalance(nextBalance);
+    setTransactions(nextTransactions);
     setWithdrawSuccess(
       `Withdrawal of ₦${amountNum.toLocaleString('en-NG')} to ${withdrawAccountName.trim()} (${withdrawBank} - ${cleanAcctNo}) has been approved using Ecoin code ${enteredCode}!`
     );
@@ -578,9 +556,18 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     setWithdrawAccountName('');
     setWithdrawAmount('');
     setWithdrawEcoinCode('');
+
+    try {
+      await updateUserWallet(user.uid, {
+        balance: nextBalance,
+        transactions: nextTransactions,
+      });
+    } catch {
+      showToast('Failed to sync withdrawal to Firebase.');
+    }
   };
 
-  const handleServiceSubmit = (serviceLabel: string) => (e: React.FormEvent) => {
+  const handleServiceSubmit = (serviceLabel: string) => async (e: React.FormEvent) => {
     e.preventDefault();
     if (accountTier === 'Starter') {
       setServiceStatus('Please upgrade your account before purchasing Airtime or Data.');
@@ -594,19 +581,35 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       );
       return;
     }
-    setBalance((prev) => prev - num);
-    recordTransaction(`${serviceLabel} (${serviceNetwork})`, num, 'debit');
+
+    const nextBalance = balance - num;
+    const entry = createTransactionEntry(`${serviceLabel} (${serviceNetwork})`, num, 'debit');
+    const nextTransactions = [entry, ...transactions].slice(0, 50);
+
+    setBalance(nextBalance);
+    setTransactions(nextTransactions);
     setServiceStatus(
       `${serviceLabel} of ₦${num.toLocaleString('en-NG')} for ${servicePhone || 'your account'} (${serviceNetwork}) was completed!`
     );
     setServiceAmount('');
     setServicePhone('');
+
+    try {
+      await updateUserWallet(user.uid, {
+        balance: nextBalance,
+        transactions: nextTransactions,
+      });
+    } catch {
+      showToast('Failed to sync purchase to Firebase.');
+    }
   };
 
   const handleCopyInviteLink = () => {
     const inviteUrl = `${window.location.origin}/?ref=${firstName.toLowerCase()}2026`;
     navigator.clipboard?.writeText(inviteUrl).catch(() => {});
-    setInvitesCount((prev) => prev + 1);
+    const nextInvites = invitesCount + 1;
+    setInvitesCount(nextInvites);
+    void updateUserWallet(user.uid, { invitesCount: nextInvites });
     showToast('Referral link copied! Share with friends to earn bonuses.');
   };
 
