@@ -45,6 +45,17 @@
       },
       "required": ["telegramUrl", "whatsappUrl"]
     },
+    "EcoinPricesConfig": {
+      "title": "EcoinPricesConfig",
+      "description": "Admin-configurable prices for Standard Ecoin and VIP Unlimited Ecoin plans.",
+      "type": "object",
+      "properties": {
+        "standardPrice": { "type": "number" },
+        "proPrice": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["standardPrice", "proPrice"]
+    },
     "EcoinSubmission": {
       "title": "EcoinSubmission",
       "description": "User payment proof submitted for Ecoin withdrawal code approval.",
@@ -104,7 +115,7 @@
     },
     "/appConfig/{docId}": {
       "schema": { "$ref": "#/entities/CompanyBankConfig" },
-      "description": "Global EverMore configuration documents such as companyBank and communityLinks."
+      "description": "Global EverMore configuration documents such as companyBank, communityLinks, and ecoinPrices."
     },
     "/ecoinSubmissions/{submissionId}": {
       "schema": { "$ref": "#/entities/EcoinSubmission" },

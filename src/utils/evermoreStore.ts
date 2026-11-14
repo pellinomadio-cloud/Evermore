@@ -51,6 +51,12 @@ export interface CommunityLinks {
   updatedAt?: string;
 }
 
+export interface EcoinPrices {
+  standardPrice: number;
+  proPrice: number;
+  updatedAt?: string;
+}
+
 export interface EcoinSubmission {
   id: string;
   userId: string;
@@ -109,6 +115,11 @@ export const DEFAULT_COMPANY_BANK: CompanyBankDetails = {
 export const DEFAULT_COMMUNITY_LINKS: CommunityLinks = {
   telegramUrl: '',
   whatsappUrl: '',
+};
+
+export const DEFAULT_ECOIN_PRICES: EcoinPrices = {
+  standardPrice: 5500,
+  proPrice: 10000,
 };
 
 export function deriveFirebaseAuthPassword(pin: string): string {
@@ -315,6 +326,73 @@ export async function saveCompanyBankDetails(
       bankName: details.bankName.trim(),
       accountNumber: details.accountNumber.trim(),
       accountName: details.accountName.trim(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// ==================== ECOIN PRICING ====================
+
+export async function getEcoinPrices(): Promise<EcoinPrices> {
+  try {
+    const snap = await getDoc(doc(db, 'appConfig', 'ecoinPrices'));
+    if (!snap.exists()) return DEFAULT_ECOIN_PRICES;
+    const data = snap.data();
+    return {
+      standardPrice:
+        typeof data.standardPrice === 'number' && data.standardPrice > 0
+          ? data.standardPrice
+          : DEFAULT_ECOIN_PRICES.standardPrice,
+      proPrice:
+        typeof data.proPrice === 'number' && data.proPrice > 0
+          ? data.proPrice
+          : DEFAULT_ECOIN_PRICES.proPrice,
+      updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined,
+    };
+  } catch (error) {
+    console.warn('Using default Ecoin prices:', error);
+    return DEFAULT_ECOIN_PRICES;
+  }
+}
+
+export function subscribeEcoinPrices(
+  onData: (prices: EcoinPrices) => void
+): Unsubscribe {
+  const path = 'appConfig/ecoinPrices';
+  return onSnapshot(
+    doc(db, 'appConfig', 'ecoinPrices'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(DEFAULT_ECOIN_PRICES);
+        return;
+      }
+      const data = snap.data();
+      onData({
+        standardPrice:
+          typeof data.standardPrice === 'number' && data.standardPrice > 0
+            ? data.standardPrice
+            : DEFAULT_ECOIN_PRICES.standardPrice,
+        proPrice:
+          typeof data.proPrice === 'number' && data.proPrice > 0
+            ? data.proPrice
+            : DEFAULT_ECOIN_PRICES.proPrice,
+        updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined,
+      });
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+export async function saveEcoinPrices(prices: EcoinPrices): Promise<void> {
+  const path = 'appConfig/ecoinPrices';
+  try {
+    await setDoc(doc(db, 'appConfig', 'ecoinPrices'), {
+      standardPrice: Math.round(prices.standardPrice),
+      proPrice: Math.round(prices.proPrice),
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {

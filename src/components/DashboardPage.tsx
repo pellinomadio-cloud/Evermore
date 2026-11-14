@@ -46,12 +46,16 @@ import {
   compressReceiptFile,
   DEFAULT_COMMUNITY_LINKS,
   DEFAULT_COMPANY_BANK,
+  DEFAULT_ECOIN_PRICES,
+  EcoinPrices,
   getCompanyBankDetails,
+  getEcoinPrices,
   getEcoinSubmissionById,
   getUpgradeSubmissionById,
   sendUserSupportMessage,
   subscribeCommunityLinks,
   subscribeCompanyBankDetails,
+  subscribeEcoinPrices,
   subscribeUserSupportThread,
   subscribeUserWallet,
   SupportThread,
@@ -186,6 +190,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   // Buy Ecoin & Payment Proof State
   const [companyBank, setCompanyBank] = useState<CompanyBankDetails>(DEFAULT_COMPANY_BANK);
+  const [ecoinPrices, setEcoinPrices] = useState<EcoinPrices>(DEFAULT_ECOIN_PRICES);
   const [communityLinks, setCommunityLinks] = useState<CommunityLinks>(DEFAULT_COMMUNITY_LINKS);
   const [selectedEcoinPlan, setSelectedEcoinPlan] = useState<'standard' | 'pro'>('standard');
   const [isLoadingPaymentPage, setIsLoadingPaymentPage] = useState(false);
@@ -240,6 +245,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setCompanyBank(details);
     });
 
+    const unsubPrices = subscribeEcoinPrices((prices) => {
+      setEcoinPrices(prices);
+    });
+
     const unsubLinks = subscribeCommunityLinks((links) => {
       setCommunityLinks(links);
     });
@@ -251,6 +260,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     return () => {
       unsubWallet();
       unsubBank();
+      unsubPrices();
       unsubLinks();
       unsubSupport();
     };
@@ -372,6 +382,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     setNewlyGeneratedCode(null);
     navigateTo('ecoin_payment');
     void getCompanyBankDetails().then((details) => setCompanyBank(details));
+    void getEcoinPrices().then((prices) => setEcoinPrices(prices));
     setTimeout(() => {
       setIsLoadingPaymentPage(false);
     }, 1200);
@@ -393,6 +404,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       return;
     }
     const submissionId = `sub-${Date.now()}`;
+    const activeEcoinPrice =
+      selectedEcoinPlan === 'standard'
+        ? ecoinPrices.standardPrice
+        : ecoinPrices.proPrice;
     try {
       await addEcoinSubmission({
         id: submissionId,
@@ -400,7 +415,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         userName: user.name,
         userEmail: user.email,
         plan: selectedEcoinPlan,
-        amount: selectedEcoinPlan === 'standard' ? 5500 : 10000,
+        amount: activeEcoinPrice,
         receiptName: paymentProofFile,
         receiptPreviewUrl: paymentProofPreview,
         status: 'pending',
@@ -1378,7 +1393,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       Standard Ecoin
                     </p>
                     <p className="font-mono-num text-base font-extrabold text-[#7c3aed] dark:text-[#c084fc] mt-1">
-                      ₦5,500
+                      ₦{ecoinPrices.standardPrice.toLocaleString('en-NG')}
                     </p>
                     <p className="text-[10px] text-slate-500 dark:text-purple-200/70 mt-0.5">
                       1 Withdrawal Code
@@ -1398,7 +1413,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       VIP Unlimited
                     </p>
                     <p className="font-mono-num text-base font-extrabold text-[#7c3aed] dark:text-[#c084fc] mt-1">
-                      ₦10,000
+                      ₦{ecoinPrices.proPrice.toLocaleString('en-NG')}
                     </p>
                     <p className="text-[10px] text-slate-500 dark:text-purple-200/70 mt-0.5">
                       Priority Payouts
@@ -1413,8 +1428,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] inline-flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>
-                  Purchase Coin (
-                  {selectedEcoinPlan === 'standard' ? '₦5,500' : '₦10,000'})
+                  Purchase Coin (₦
+                  {(selectedEcoinPlan === 'standard'
+                    ? ecoinPrices.standardPrice
+                    : ecoinPrices.proPrice
+                  ).toLocaleString('en-NG')}
+                  )
                 </span>
               </button>
             </div>
@@ -1437,8 +1456,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     Preparing company bank account for{' '}
                     <strong>
                       {selectedEcoinPlan === 'standard'
-                        ? 'Standard Ecoin (₦5,500)'
-                        : 'VIP Unlimited (₦10,000)'}
+                        ? `Standard Ecoin (₦${ecoinPrices.standardPrice.toLocaleString('en-NG')})`
+                        : `VIP Unlimited (₦${ecoinPrices.proPrice.toLocaleString('en-NG')})`}
                     </strong>
                   </p>
                 </div>
@@ -1453,7 +1472,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <p className="text-xs text-slate-600 dark:text-[#c4b5fd]">
                     Transfer{' '}
                     <strong className="text-[#1e1b4b] dark:text-white">
-                      {selectedEcoinPlan === 'standard' ? '₦5,500' : '₦10,000'}
+                      ₦
+                      {(selectedEcoinPlan === 'standard'
+                        ? ecoinPrices.standardPrice
+                        : ecoinPrices.proPrice
+                      ).toLocaleString('en-NG')}
                     </strong>{' '}
                     to the account below:
                   </p>
@@ -1495,7 +1518,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <div className="flex items-center justify-between pt-2 border-t border-purple-100 dark:border-[#2a134f]">
                     <span className="text-slate-500 dark:text-[#b794f4]">Amount</span>
                     <span className="font-mono-num font-extrabold text-sm text-[#1e1b4b] dark:text-white">
-                      {selectedEcoinPlan === 'standard' ? '₦5,500' : '₦10,000'}
+                      ₦
+                      {(selectedEcoinPlan === 'standard'
+                        ? ecoinPrices.standardPrice
+                        : ecoinPrices.proPrice
+                      ).toLocaleString('en-NG')}
                     </span>
                   </div>
                 </div>

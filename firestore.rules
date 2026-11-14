@@ -60,6 +60,13 @@ service cloud.firestore {
         && data.whatsappUrl is string && data.whatsappUrl.size() <= 300;
     }
 
+    function isValidEcoinPrices(data) {
+      return data.keys().hasAll(['standardPrice', 'proPrice'])
+        && data.keys().hasOnly(['standardPrice', 'proPrice', 'updatedAt'])
+        && data.standardPrice is number && data.standardPrice > 0
+        && data.proPrice is number && data.proPrice > 0;
+    }
+
     function isValidEcoinSubmission(data) {
       return data.keys().hasAll(['id', 'userId', 'userName', 'userEmail', 'plan', 'amount', 'receiptName', 'status', 'createdAt'])
         && data.keys().hasOnly([
@@ -139,7 +146,8 @@ service cloud.firestore {
       allow get: if true;
       allow create, update: if isSignedIn() && (
         (docId == 'companyBank' && isValidBankConfig(incoming())) ||
-        (docId == 'communityLinks' && isValidCommunityLinks(incoming()))
+        (docId == 'communityLinks' && isValidCommunityLinks(incoming())) ||
+        (docId == 'ecoinPrices' && isValidEcoinPrices(incoming()))
       );
     }
 

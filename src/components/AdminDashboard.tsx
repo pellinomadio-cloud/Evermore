@@ -4,6 +4,7 @@ import {
   Building2,
   CheckCircle2,
   Clock,
+  CreditCard,
   Headphones,
   MessageCircle,
   RefreshCw,
@@ -22,17 +23,22 @@ import {
   declineUpgradeSubmission,
   DEFAULT_COMMUNITY_LINKS,
   DEFAULT_COMPANY_BANK,
+  DEFAULT_ECOIN_PRICES,
+  EcoinPrices,
   EcoinSubmission,
   getCommunityLinks,
   getCompanyBankDetails,
+  getEcoinPrices,
   getRegisteredUserAmounts,
   RegisteredUserAmount,
   saveCommunityLinks,
   saveCompanyBankDetails,
+  saveEcoinPrices,
   sendAdminSupportReply,
   subscribeAllSupportThreads,
   subscribeCommunityLinks,
   subscribeCompanyBankDetails,
+  subscribeEcoinPrices,
   subscribeEcoinSubmissions,
   subscribeRegisteredUserAmounts,
   subscribeUpgradeSubmissions,
@@ -50,6 +56,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onExit,
 }) => {
   const [bankDetails, setBankDetails] = useState<CompanyBankDetails>(DEFAULT_COMPANY_BANK);
+  const [ecoinPriceInputs, setEcoinPriceInputs] = useState<{
+    standardPrice: string;
+    proPrice: string;
+  }>({
+    standardPrice: String(DEFAULT_ECOIN_PRICES.standardPrice),
+    proPrice: String(DEFAULT_ECOIN_PRICES.proPrice),
+  });
   const [communityLinks, setCommunityLinks] = useState<CommunityLinks>(DEFAULT_COMMUNITY_LINKS);
   const [submissions, setSubmissions] = useState<EcoinSubmission[]>([]);
   const [upgradeSubmissions, setUpgradeSubmissions] = useState<UpgradeSubmission[]>([]);
@@ -69,6 +82,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const unsubBank = subscribeCompanyBankDetails((details) => {
       setBankDetails(details);
     });
+    const unsubPrices = subscribeEcoinPrices((prices: EcoinPrices) => {
+      setEcoinPriceInputs({
+        standardPrice: String(prices.standardPrice),
+        proPrice: String(prices.proPrice),
+      });
+    });
     const unsubLinks = subscribeCommunityLinks((links) => {
       setCommunityLinks(links);
     });
@@ -87,6 +106,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     return () => {
       unsubBank();
+      unsubPrices();
       unsubLinks();
       unsubEcoin();
       unsubUpgrade();
@@ -104,12 +124,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleManualRefresh = async () => {
     try {
-      const [bank, links, summary] = await Promise.all([
+      const [bank, prices, links, summary] = await Promise.all([
         getCompanyBankDetails(),
+        getEcoinPrices(),
         getCommunityLinks(),
         getRegisteredUserAmounts(),
       ]);
       setBankDetails(bank);
+      setEcoinPriceInputs({
+        standardPrice: String(prices.standardPrice),
+        proPrice: String(prices.proPrice),
+      });
       setCommunityLinks(links);
       setUserSummary(summary);
       showNotice('Synced with Firebase.');
@@ -153,6 +178,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       showNotice('Telegram & WhatsApp channel links saved to Firebase.');
     } catch {
       showNotice('Failed to save channel links. Check Firestore rules.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleSaveEcoinPrices = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const standardPrice = Number(ecoinPriceInputs.standardPrice);
+    const proPrice = Number(ecoinPriceInputs.proPrice);
+    if (!standardPrice || standardPrice <= 0 || !proPrice || proPrice <= 0) {
+      showNotice('Please enter valid Ecoin prices greater than 0.');
+      return;
+    }
+    setBusyId('save-prices');
+    try {
+      await saveEcoinPrices({ standardPrice, proPrice });
+      showNotice('Ecoin prices updated across Firebase.');
+    } catch {
+      showNotice('Failed to save Ecoin prices. Check Firestore rules.');
     } finally {
       setBusyId(null);
     }
@@ -335,7 +379,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 : 'text-slate-600 dark:text-[#c4b5fd] hover:text-[#1e1b4b]'
             }`}
           >
-            Company Bank
+            Bank &amp; Prices
           </button>
 
           <button
@@ -704,86 +748,155 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </section>
         )}
 
-        {/* TAB 3: Set Company Bank Account Details */}
+        {/* TAB 3: Set Company Bank Account Details & Ecoin Prices */}
         {activeTab === 'bank' && (
-          <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-[#7c3aed]" />
-              <h2 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white">
-                Company Receiving Account Details
-              </h2>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-[#c4b5fd]">
-              Whatever account details you save here will immediately sync across
-              Firebase to all users on the Ecoin and Upgrade payment pages.
-            </p>
-
-            <form onSubmit={handleSaveBank} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
-                  Bank Name
-                </label>
-                <input
-                  type="text"
-                  value={bankDetails.bankName}
-                  onChange={(e) =>
-                    setBankDetails((prev) => ({ ...prev, bankName: e.target.value }))
-                  }
-                  placeholder="e.g. Moniepoint MFB"
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
-                />
+          <div className="space-y-4">
+            <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-[#7c3aed]" />
+                <h2 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white">
+                  Ecoin Code Pricing
+                </h2>
               </div>
+              <p className="text-xs text-slate-500 dark:text-[#c4b5fd]">
+                Set the prices shown to users when purchasing Standard Ecoin or VIP
+                Unlimited codes.
+              </p>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
-                  Account Number
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={10}
-                  value={bankDetails.accountNumber}
-                  onChange={(e) =>
-                    setBankDetails((prev) => ({
-                      ...prev,
-                      accountNumber: e.target.value.replace(/\D/g, ''),
-                    }))
-                  }
-                  placeholder="10-digit account number"
-                  required
-                  className="font-mono-num w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
-                />
+              <form onSubmit={handleSaveEcoinPrices} className="space-y-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
+                      Standard Ecoin Price (₦)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step="1"
+                      value={ecoinPriceInputs.standardPrice}
+                      onChange={(e) =>
+                        setEcoinPriceInputs((prev) => ({
+                          ...prev,
+                          standardPrice: e.target.value,
+                        }))
+                      }
+                      placeholder="5500"
+                      required
+                      className="font-mono-num w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
+                      VIP Unlimited Price (₦)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step="1"
+                      value={ecoinPriceInputs.proPrice}
+                      onChange={(e) =>
+                        setEcoinPriceInputs((prev) => ({
+                          ...prev,
+                          proPrice: e.target.value,
+                        }))
+                      }
+                      placeholder="10000"
+                      required
+                      className="font-mono-num w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={busyId === 'save-prices'}
+                  className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] cursor-pointer"
+                >
+                  {busyId === 'save-prices' ? 'Saving...' : 'Save Ecoin Prices'}
+                </button>
+              </form>
+            </section>
+
+            <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-[#7c3aed]" />
+                <h2 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white">
+                  Company Receiving Account Details
+                </h2>
               </div>
+              <p className="text-xs text-slate-500 dark:text-[#c4b5fd]">
+                Whatever account details you save here will immediately sync across
+                Firebase to all users on the Ecoin and Upgrade payment pages.
+              </p>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
-                  Account Name
-                </label>
-                <input
-                  type="text"
-                  value={bankDetails.accountName}
-                  onChange={(e) =>
-                    setBankDetails((prev) => ({
-                      ...prev,
-                      accountName: e.target.value,
-                    }))
-                  }
-                  placeholder="e.g. EverMore Technologies Ltd"
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
-                />
-              </div>
+              <form onSubmit={handleSaveBank} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
+                    Bank Name
+                  </label>
+                  <input
+                    type="text"
+                    value={bankDetails.bankName}
+                    onChange={(e) =>
+                      setBankDetails((prev) => ({ ...prev, bankName: e.target.value }))
+                    }
+                    placeholder="e.g. Moniepoint MFB"
+                    required
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                  />
+                </div>
 
-              <button
-                type="submit"
-                disabled={busyId === 'save-bank'}
-                className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] cursor-pointer"
-              >
-                {busyId === 'save-bank' ? 'Saving...' : 'Save Company Account Details'}
-              </button>
-            </form>
-          </section>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
+                    Account Number
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={bankDetails.accountNumber}
+                    onChange={(e) =>
+                      setBankDetails((prev) => ({
+                        ...prev,
+                        accountNumber: e.target.value.replace(/\D/g, ''),
+                      }))
+                    }
+                    placeholder="10-digit account number"
+                    required
+                    className="font-mono-num w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1">
+                    Account Name
+                  </label>
+                  <input
+                    type="text"
+                    value={bankDetails.accountName}
+                    onChange={(e) =>
+                      setBankDetails((prev) => ({
+                        ...prev,
+                        accountName: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g. EverMore Technologies Ltd"
+                    required
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={busyId === 'save-bank'}
+                  className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] cursor-pointer"
+                >
+                  {busyId === 'save-bank' ? 'Saving...' : 'Save Company Account Details'}
+                </button>
+              </form>
+            </section>
+          </div>
         )}
 
         {/* TAB 3: Set Telegram & WhatsApp Group Channel Links */}
