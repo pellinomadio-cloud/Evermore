@@ -9,6 +9,7 @@ import {
   Copy,
   CreditCard,
   Crown,
+  ExternalLink,
   Eye,
   EyeOff,
   Gift,
@@ -21,6 +22,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   PlayCircle,
+  Send,
   ShieldAlert,
   ShieldCheck,
   Smartphone,
@@ -38,12 +40,15 @@ import { UserAccount } from './AuthPage';
 import {
   addEcoinSubmission,
   addUpgradeSubmission,
+  CommunityLinks,
   CompanyBankDetails,
   compressReceiptFile,
+  DEFAULT_COMMUNITY_LINKS,
   DEFAULT_COMPANY_BANK,
   getCompanyBankDetails,
   getEcoinSubmissionById,
   getUpgradeSubmissionById,
+  subscribeCommunityLinks,
   subscribeCompanyBankDetails,
   subscribeUserWallet,
   TransactionEntry,
@@ -125,6 +130,14 @@ function createTransactionEntry(
   };
 }
 
+function normalizeChannelUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^(javascript|data|vbscript):/i.test(trimmed)) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   user,
   darkMode,
@@ -146,6 +159,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   // Purchased Ecoin withdrawal codes owned by this user
   const [purchasedCodes, setPurchasedCodes] = useState<string[]>([]);
+  const [unseenApprovedCodes, setUnseenApprovedCodes] = useState<string[]>([]);
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   const [watchedVideoIds, setWatchedVideoIds] = useState<string[]>([]);
   const [accountTier, setAccountTier] = useState<'Starter' | 'Silver' | 'Gold VIP'>('Starter');
@@ -168,6 +182,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   // Buy Ecoin & Payment Proof State
   const [companyBank, setCompanyBank] = useState<CompanyBankDetails>(DEFAULT_COMPANY_BANK);
+  const [communityLinks, setCommunityLinks] = useState<CommunityLinks>(DEFAULT_COMMUNITY_LINKS);
   const [selectedEcoinPlan, setSelectedEcoinPlan] = useState<'standard' | 'pro'>('standard');
   const [isLoadingPaymentPage, setIsLoadingPaymentPage] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<string | null>(null);
@@ -199,7 +214,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [serviceStatus, setServiceStatus] = useState<string | null>(null);
   const [supportMessage, setSupportMessage] = useState('');
 
-  // Real-time Firestore subscriptions for user wallet and company bank config
+  // Real-time Firestore subscriptions for user wallet, company bank, and community links
   useEffect(() => {
     const unsubWallet = subscribeUserWallet(user.uid, (wallet) => {
       setBalance(wallet.balance);
@@ -207,6 +222,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setCheckInCount(wallet.checkInCount);
       setEarnedTotal(wallet.earnedTotal);
       setPurchasedCodes(wallet.purchasedCodes);
+      setUnseenApprovedCodes(wallet.unseenApprovedCodes);
       setLastClaimDate(wallet.lastClaimDate);
       setTransactions(wallet.transactions);
       setWatchedVideoIds(wallet.watchedVideoIds);
@@ -217,9 +233,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setCompanyBank(details);
     });
 
+    const unsubLinks = subscribeCommunityLinks((links) => {
+      setCommunityLinks(links);
+    });
+
     return () => {
       unsubWallet();
       unsubBank();
+      unsubLinks();
     };
   }, [user.uid]);
 
@@ -616,6 +637,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const handleCopyCode = (code: string) => {
     navigator.clipboard?.writeText(code).catch(() => {});
     showToast(`Copied Ecoin code: ${code}`);
+  };
+
+  const handleDismissApprovedCodePopup = () => {
+    setUnseenApprovedCodes([]);
+    void updateUserWallet(user.uid, { unseenApprovedCodes: [] });
+  };
+
+  const handleUseApprovedCodeForWithdraw = () => {
+    const latestCode = unseenApprovedCodes[unseenApprovedCodes.length - 1] || '';
+    setUnseenApprovedCodes([]);
+    void updateUserWallet(user.uid, { unseenApprovedCodes: [] });
+    if (latestCode) {
+      setWithdrawEcoinCode(latestCode);
+    }
+    navigateTo('withdraw');
   };
 
   // Sub-page title lookup
@@ -2112,44 +2148,68 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         {subPage === 'groups' && (
           <section className="rounded-2xl bg-white dark:bg-[#17092e] p-5 shadow-md border border-purple-100 dark:border-[#31175c] space-y-3.5">
             <p className="text-xs text-slate-600 dark:text-[#c4b5fd]">
-              Join official EverMore communities to get daily Ecoin promos,
-              payment proofs, and instant updates:
+              Join official EverMore channels on Telegram and WhatsApp to get daily
+              Ecoin updates, announcements, and community support:
             </p>
             {[
               {
+                key: 'telegram',
                 title: 'EverMore Official Telegram Channel',
-                members: '28,400+ Members',
+                subtitle: 'Official announcements & daily updates',
+                url: normalizeChannelUrl(communityLinks.telegramUrl),
+                icon: Send,
               },
               {
-                title: 'EverMore VIP Earners Group',
-                members: '14,200+ Members',
+                key: 'whatsapp',
+                title: 'EverMore Official WhatsApp Channel',
+                subtitle: 'Verified community alerts & payouts',
+                url: normalizeChannelUrl(communityLinks.whatsappUrl),
+                icon: MessageCircle,
               },
-              {
-                title: 'EverMore Daily Payout Proofs',
-                members: '39,100+ Members',
-              },
-            ].map((grp) => (
-              <div
-                key={grp.title}
-                className="p-3.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-100 dark:border-[#2a134f] flex items-center justify-between gap-3"
-              >
-                <div>
-                  <p className="text-xs font-bold text-[#1e1b4b] dark:text-white">
-                    {grp.title}
-                  </p>
-                  <p className="text-[11px] text-slate-500 dark:text-[#b794f4]">
-                    {grp.members}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => showToast(`Joined ${grp.title}!`)}
-                  className="px-3.5 py-1.5 rounded-full bg-[#7c3aed] text-white text-xs font-bold cursor-pointer shrink-0"
+            ].map((grp) => {
+              const IconComp = grp.icon;
+              return (
+                <div
+                  key={grp.key}
+                  className="p-3.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-100 dark:border-[#2a134f] flex items-center justify-between gap-3"
                 >
-                  Join
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-[#f3e8ff] dark:bg-[#261147] text-[#7c3aed] dark:text-[#c084fc] flex items-center justify-center shrink-0">
+                      <IconComp className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#1e1b4b] dark:text-white truncate">
+                        {grp.title}
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-[#b794f4] truncate">
+                        {grp.url ? grp.url : grp.subtitle}
+                      </p>
+                    </div>
+                  </div>
+                  {grp.url ? (
+                    <a
+                      href={grp.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3.5 py-1.5 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white text-xs font-bold shrink-0 inline-flex items-center gap-1"
+                    >
+                      <span>Join</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        showToast('Channel link has not been configured yet.')
+                      }
+                      className="px-3.5 py-1.5 rounded-full bg-purple-100 dark:bg-[#261147] text-[#7c3aed] dark:text-[#c084fc] text-xs font-bold cursor-pointer shrink-0"
+                    >
+                      Pending
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </section>
         )}
 
@@ -2384,6 +2444,80 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
         </aside>
       </div>
+
+      {/* Approved Ecoin Purchase Popup Notification */}
+      {unseenApprovedCodes.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#17092e] border border-purple-200 dark:border-[#31175c] rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-full bg-[#f3e8ff] dark:bg-[#261147] text-[#7c3aed] dark:text-[#c084fc] flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white">
+                    Ecoin Purchase Approved!
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-[#c4b5fd]">
+                    Your pending Ecoin code is ready to use.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleDismissApprovedCodePopup}
+                aria-label="Close approval notification"
+                className="w-7 h-7 rounded-full bg-[#f3e8ff] dark:bg-[#261147] flex items-center justify-center text-[#7c3aed] cursor-pointer shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {unseenApprovedCodes.map((code) => (
+                <div
+                  key={code}
+                  className="p-3 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] flex items-center justify-between gap-2"
+                >
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[#b794f4]">
+                      Approved Ecoin Code
+                    </p>
+                    <p className="font-mono-num text-base font-extrabold text-[#7c3aed] dark:text-[#c084fc]">
+                      {code}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCode(code)}
+                    className="px-3 py-1.5 rounded-full bg-[#f3e8ff] dark:bg-[#261147] text-[#7c3aed] dark:text-[#c084fc] text-xs font-bold inline-flex items-center gap-1 hover:bg-[#e9d5ff] cursor-pointer shrink-0"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={handleDismissApprovedCodePopup}
+                className="py-2.5 rounded-full border border-purple-200 dark:border-[#331860] text-[#7c3aed] dark:text-[#c084fc] font-bold text-xs cursor-pointer hover:bg-purple-50 dark:hover:bg-[#220e42]"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={handleUseApprovedCodeForWithdraw}
+                className="py-2.5 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold text-xs cursor-pointer shadow-[0_4px_12px_rgba(124,58,237,0.3)]"
+              >
+                Go to Withdraw
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Silent Key Verification Modal */}
       {showKeyPrompt && (

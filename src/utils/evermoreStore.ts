@@ -30,6 +30,7 @@ export interface UserWalletData {
   checkInCount: number;
   earnedTotal: number;
   purchasedCodes: string[];
+  unseenApprovedCodes: string[];
   lastClaimDate: string | null;
   transactions: TransactionEntry[];
   watchedVideoIds: string[];
@@ -41,6 +42,12 @@ export interface CompanyBankDetails {
   bankName: string;
   accountNumber: string;
   accountName: string;
+  updatedAt?: string;
+}
+
+export interface CommunityLinks {
+  telegramUrl: string;
+  whatsappUrl: string;
   updatedAt?: string;
 }
 
@@ -81,6 +88,11 @@ export const DEFAULT_COMPANY_BANK: CompanyBankDetails = {
   bankName: 'Moniepoint MFB',
   accountNumber: '8104927361',
   accountName: 'EverMore Technologies Ltd',
+};
+
+export const DEFAULT_COMMUNITY_LINKS: CommunityLinks = {
+  telegramUrl: '',
+  whatsappUrl: '',
 };
 
 export function deriveFirebaseAuthPassword(pin: string): string {
@@ -143,6 +155,9 @@ export async function ensureUserWallet(
         checkInCount: typeof data.checkInCount === 'number' ? data.checkInCount : 0,
         earnedTotal: typeof data.earnedTotal === 'number' ? data.earnedTotal : 0,
         purchasedCodes: Array.isArray(data.purchasedCodes) ? data.purchasedCodes : [],
+        unseenApprovedCodes: Array.isArray(data.unseenApprovedCodes)
+          ? data.unseenApprovedCodes
+          : [],
         lastClaimDate: typeof data.lastClaimDate === 'string' ? data.lastClaimDate : null,
         transactions: Array.isArray(data.transactions) ? data.transactions : [],
         watchedVideoIds: Array.isArray(data.watchedVideoIds) ? data.watchedVideoIds : [],
@@ -164,6 +179,7 @@ export async function ensureUserWallet(
       checkInCount: 0,
       earnedTotal: 0,
       purchasedCodes: [],
+      unseenApprovedCodes: [],
       lastClaimDate: null,
       transactions: [],
       watchedVideoIds: [],
@@ -197,6 +213,9 @@ export function subscribeUserWallet(
         checkInCount: typeof data.checkInCount === 'number' ? data.checkInCount : 0,
         earnedTotal: typeof data.earnedTotal === 'number' ? data.earnedTotal : 0,
         purchasedCodes: Array.isArray(data.purchasedCodes) ? data.purchasedCodes : [],
+        unseenApprovedCodes: Array.isArray(data.unseenApprovedCodes)
+          ? data.unseenApprovedCodes
+          : [],
         lastClaimDate: typeof data.lastClaimDate === 'string' ? data.lastClaimDate : null,
         transactions: Array.isArray(data.transactions) ? data.transactions : [],
         watchedVideoIds: Array.isArray(data.watchedVideoIds) ? data.watchedVideoIds : [],
@@ -287,6 +306,61 @@ export async function saveCompanyBankDetails(
   }
 }
 
+// ==================== COMMUNITY CHANNEL LINKS ====================
+
+export async function getCommunityLinks(): Promise<CommunityLinks> {
+  try {
+    const snap = await getDoc(doc(db, 'appConfig', 'communityLinks'));
+    if (!snap.exists()) return DEFAULT_COMMUNITY_LINKS;
+    const data = snap.data();
+    return {
+      telegramUrl: typeof data.telegramUrl === 'string' ? data.telegramUrl : '',
+      whatsappUrl: typeof data.whatsappUrl === 'string' ? data.whatsappUrl : '',
+      updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined,
+    };
+  } catch (error) {
+    console.warn('Using default community links:', error);
+    return DEFAULT_COMMUNITY_LINKS;
+  }
+}
+
+export function subscribeCommunityLinks(
+  onData: (links: CommunityLinks) => void
+): Unsubscribe {
+  const path = 'appConfig/communityLinks';
+  return onSnapshot(
+    doc(db, 'appConfig', 'communityLinks'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(DEFAULT_COMMUNITY_LINKS);
+        return;
+      }
+      const data = snap.data();
+      onData({
+        telegramUrl: typeof data.telegramUrl === 'string' ? data.telegramUrl : '',
+        whatsappUrl: typeof data.whatsappUrl === 'string' ? data.whatsappUrl : '',
+        updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined,
+      });
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+export async function saveCommunityLinks(links: CommunityLinks): Promise<void> {
+  const path = 'appConfig/communityLinks';
+  try {
+    await setDoc(doc(db, 'appConfig', 'communityLinks'), {
+      telegramUrl: links.telegramUrl.trim(),
+      whatsappUrl: links.whatsappUrl.trim(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
 // ==================== ECOIN SUBMISSIONS ====================
 
 export async function addEcoinSubmission(submission: EcoinSubmission): Promise<void> {
@@ -354,6 +428,7 @@ export async function approveEcoinSubmission(
     if (submission.userId) {
       await updateDoc(doc(db, 'users', submission.userId), {
         purchasedCodes: arrayUnion(code),
+        unseenApprovedCodes: arrayUnion(code),
       });
     }
     return code;

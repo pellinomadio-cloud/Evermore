@@ -4,7 +4,9 @@ import {
   Building2,
   CheckCircle2,
   Clock,
+  MessageCircle,
   RefreshCw,
+  Send,
   ShieldCheck,
   Users,
   XCircle,
@@ -13,15 +15,20 @@ import { GpayLogo } from './GpayLogo';
 import {
   approveEcoinSubmission,
   approveUpgradeSubmission,
+  CommunityLinks,
   CompanyBankDetails,
   declineEcoinSubmission,
   declineUpgradeSubmission,
+  DEFAULT_COMMUNITY_LINKS,
   DEFAULT_COMPANY_BANK,
   EcoinSubmission,
+  getCommunityLinks,
   getCompanyBankDetails,
   getRegisteredUserAmounts,
   RegisteredUserAmount,
+  saveCommunityLinks,
   saveCompanyBankDetails,
+  subscribeCommunityLinks,
   subscribeCompanyBankDetails,
   subscribeEcoinSubmissions,
   subscribeRegisteredUserAmounts,
@@ -39,6 +46,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onExit,
 }) => {
   const [bankDetails, setBankDetails] = useState<CompanyBankDetails>(DEFAULT_COMPANY_BANK);
+  const [communityLinks, setCommunityLinks] = useState<CommunityLinks>(DEFAULT_COMMUNITY_LINKS);
   const [submissions, setSubmissions] = useState<EcoinSubmission[]>([]);
   const [upgradeSubmissions, setUpgradeSubmissions] = useState<UpgradeSubmission[]>([]);
   const [userSummary, setUserSummary] = useState<{
@@ -47,12 +55,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     users: RegisteredUserAmount[];
   }>({ totalUsers: 0, totalBalance: 0, users: [] });
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'payments' | 'bank' | 'users'>('payments');
+  const [activeTab, setActiveTab] = useState<'payments' | 'bank' | 'groups' | 'users'>('payments');
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubBank = subscribeCompanyBankDetails((details) => {
       setBankDetails(details);
+    });
+    const unsubLinks = subscribeCommunityLinks((links) => {
+      setCommunityLinks(links);
     });
     const unsubEcoin = subscribeEcoinSubmissions((items) => {
       setSubmissions(items);
@@ -66,6 +77,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     return () => {
       unsubBank();
+      unsubLinks();
       unsubEcoin();
       unsubUpgrade();
       unsubUsers();
@@ -81,11 +93,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleManualRefresh = async () => {
     try {
-      const [bank, summary] = await Promise.all([
+      const [bank, links, summary] = await Promise.all([
         getCompanyBankDetails(),
+        getCommunityLinks(),
         getRegisteredUserAmounts(),
       ]);
       setBankDetails(bank);
+      setCommunityLinks(links);
       setUserSummary(summary);
       showNotice('Synced with Firebase.');
     } catch {
@@ -112,6 +126,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       showNotice('Company bank account details saved to Firebase.');
     } catch {
       showNotice('Failed to save bank details. Check Firestore rules.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleSaveCommunityLinks = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusyId('save-links');
+    try {
+      await saveCommunityLinks({
+        telegramUrl: communityLinks.telegramUrl.trim(),
+        whatsappUrl: communityLinks.whatsappUrl.trim(),
+      });
+      showNotice('Telegram & WhatsApp channel links saved to Firebase.');
+    } catch {
+      showNotice('Failed to save channel links. Check Firestore rules.');
     } finally {
       setBusyId(null);
     }
@@ -242,7 +272,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </section>
 
         {/* Segmented Tab Controls */}
-        <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-purple-100/70 dark:bg-[#17092e] border border-purple-200/70 dark:border-[#31175c]">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 rounded-xl bg-purple-100/70 dark:bg-[#17092e] border border-purple-200/70 dark:border-[#31175c]">
           <button
             type="button"
             onClick={() => setActiveTab('payments')}
@@ -265,6 +295,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             }`}
           >
             Company Bank
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('groups')}
+            className={`py-2 px-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'groups'
+                ? 'bg-white dark:bg-[#7c3aed] text-[#7c3aed] dark:text-white shadow-xs'
+                : 'text-slate-600 dark:text-[#c4b5fd] hover:text-[#1e1b4b]'
+            }`}
+          >
+            Group Links
           </button>
 
           <button
@@ -547,7 +589,71 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </section>
         )}
 
-        {/* TAB 3: Registered User Amounts (Amounts Only, Not Personal Data) */}
+        {/* TAB 3: Set Telegram & WhatsApp Group Channel Links */}
+        {activeTab === 'groups' && (
+          <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-[#7c3aed]" />
+              <h2 className="text-sm font-extrabold text-[#1e1b4b] dark:text-white">
+                Telegram &amp; WhatsApp Channel Links
+              </h2>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-[#c4b5fd]">
+              Set the official Telegram and WhatsApp channel links shown to users on the
+              Groups page. Changes sync across Firebase immediately.
+            </p>
+
+            <form onSubmit={handleSaveCommunityLinks} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1 flex items-center gap-1.5">
+                  <Send className="w-3.5 h-3.5 text-[#7c3aed]" />
+                  <span>Telegram Channel Link</span>
+                </label>
+                <input
+                  type="text"
+                  value={communityLinks.telegramUrl}
+                  onChange={(e) =>
+                    setCommunityLinks((prev) => ({
+                      ...prev,
+                      telegramUrl: e.target.value,
+                    }))
+                  }
+                  placeholder="https://t.me/yourchannel"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-purple-100 mb-1 flex items-center gap-1.5">
+                  <MessageCircle className="w-3.5 h-3.5 text-[#7c3aed]" />
+                  <span>WhatsApp Channel Link</span>
+                </label>
+                <input
+                  type="text"
+                  value={communityLinks.whatsappUrl}
+                  onChange={(e) =>
+                    setCommunityLinks((prev) => ({
+                      ...prev,
+                      whatsappUrl: e.target.value,
+                    }))
+                  }
+                  placeholder="https://whatsapp.com/channel/..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#faf7ff] dark:bg-[#110622] border border-purple-200 dark:border-[#331860] text-xs sm:text-sm focus:outline-none focus:border-[#7c3aed]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={busyId === 'save-links'}
+                className="w-full py-3 rounded-full bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 text-white font-bold text-xs sm:text-sm shadow-[0_4px_14px_rgba(124,58,237,0.3)] cursor-pointer"
+              >
+                {busyId === 'save-links' ? 'Saving...' : 'Save Channel Links'}
+              </button>
+            </form>
+          </section>
+        )}
+
+        {/* TAB 4: Registered User Amounts (Amounts Only, Not Personal Data) */}
         {activeTab === 'users' && (
           <section className="rounded-2xl bg-white dark:bg-[#17092e] border border-purple-100 dark:border-[#31175c] p-4 sm:p-5 space-y-3.5">
             <div className="flex items-center justify-between">

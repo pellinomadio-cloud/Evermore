@@ -13,6 +13,7 @@
         "checkInCount": { "type": "number" },
         "earnedTotal": { "type": "number" },
         "purchasedCodes": { "type": "array" },
+        "unseenApprovedCodes": { "type": "array" },
         "lastClaimDate": { "type": "string", "maxLength": 20 },
         "transactions": { "type": "array" },
         "watchedVideoIds": { "type": "array" },
@@ -32,6 +33,17 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["bankName", "accountNumber", "accountName"]
+    },
+    "CommunityLinksConfig": {
+      "title": "CommunityLinksConfig",
+      "description": "Official Telegram and WhatsApp channel links configured by admin for the Groups page.",
+      "type": "object",
+      "properties": {
+        "telegramUrl": { "type": "string", "maxLength": 300 },
+        "whatsappUrl": { "type": "string", "maxLength": 300 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["telegramUrl", "whatsappUrl"]
     },
     "EcoinSubmission": {
       "title": "EcoinSubmission",
@@ -78,7 +90,7 @@
     },
     "/appConfig/{docId}": {
       "schema": { "$ref": "#/entities/CompanyBankConfig" },
-      "description": "Global EverMore configuration documents such as companyBank."
+      "description": "Global EverMore configuration documents such as companyBank and communityLinks."
     },
     "/ecoinSubmissions/{submissionId}": {
       "schema": { "$ref": "#/entities/EcoinSubmission" },
